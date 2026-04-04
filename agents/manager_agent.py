@@ -17,6 +17,54 @@ import config
 
 logger = logging.getLogger(__name__)
 
+_TRADE_OPPORTUNITIES_PROMPT = """\
+You are TradingPal-AI, a beginner-friendly stock advisor.
+
+=== USER CONTEXT ===
+Ticker:            {ticker}
+Investment Amount: ${investment_amount:,.2f}
+Trading Frequency: {trade_frequency}
+Time Horizon:      {horizon}
+Recurring Income:  {recurring_info}
+
+=== CURRENT SIGNALS ===
+Technical Signal:  {technical_signal}
+RSI(14):           {rsi:.1f}
+Sentiment:         {sentiment_label}
+
+=== PERSONAL CONTEXT ===
+{extra_context}
+
+=== TASK ===
+Generate 3-5 specific trade actions the user could take to grow their portfolio.
+Use plain English — no jargon. For long-term horizons (>3 months) suggest
+weekly or monthly moves, not intraday trades.
+If the user has recurring income, factor it into the strategy (e.g. suggest DCA entry points).
+If the personal context mentions existing holdings, account for them.
+
+Return ONLY valid JSON array (no markdown fences), exactly:
+[
+  {{"stock": "TICKER (Company Name)", "action": "BUY", "reason": "plain English reason under 20 words", "price_range": "e.g. $180-$185 or current market price"}},
+  ...
+]
+"""
+
+_STOCK_DISCOVERY_PROMPT = """\
+You are TradingPal-AI. The user is currently looking at {ticker}.
+They have approximately {remaining_pct:.0f}% of their portfolio uninvested.
+
+Based on current market trends and growth potential, suggest 2-3 OTHER stocks or ETFs
+(not {ticker}) that a beginner investor could consider adding to their portfolio.
+Choose assets with strong recent momentum, positive news, or solid fundamentals.
+Keep it simple — one reason per stock in plain English.
+
+Return ONLY valid JSON array (no markdown fences):
+[
+  {{"ticker": "SYMBOL", "reason": "one plain-English sentence about why this looks promising"}},
+  ...
+]
+"""
+
 _FALLBACK_DECISION = {
     "decision": "HOLD",
     "confidence": 0.5,
@@ -36,6 +84,7 @@ Analyse the following signals and produce a final investment recommendation.
 Ticker:            {ticker}
 Investment Amount: ${investment_amount:,.2f}
 Risk Tolerance:    {risk_tolerance}
+Recurring Income:  {recurring_info}
 
 === TECHNICAL SIGNALS ===
 Signal:            {technical_signal}
@@ -58,14 +107,50 @@ Take-Profit 2:     ${take_profit_2:.2f}
 Risk/Reward:       {risk_reward_ratio:.2f}
 Max Loss:          ${max_loss:.2f}
 
+=== PERSONAL CONTEXT ===
+{extra_context}
+
 === TASK ===
-Based on ALL signals above, return ONLY valid JSON (no markdown fences) in this exact format:
+Based on ALL signals above and the personal context, return ONLY valid JSON (no markdown fences) in this exact format:
 {{
   "decision": "BUY" | "HOLD" | "SELL",
   "confidence": <float 0.0-1.0>,
   "explanation": "<2-4 sentence rationale>",
   "key_risks": ["<risk 1>", "<risk 2>", "<risk 3>"],
   "next_steps": ["<action 1>", "<action 2>", "<action 3>"]
+}}
+"""
+
+_CONTEXT_ADVICE_PROMPT = """\
+You are TradingPal-AI, a personalized financial advisor.
+
+=== USER SITUATION ===
+Ticker they are analysing: {ticker}
+Investment amount:         ${investment_amount:,.2f}
+Risk tolerance:            {risk_tolerance}
+Time horizon:              {horizon}
+Recurring income/savings:  {recurring_info}
+
+=== CURRENT MARKET SIGNALS ===
+Technical signal: {technical_signal}
+RSI(14):          {rsi:.1f}
+Sentiment:        {sentiment_label}
+
+=== WHAT THE USER TOLD US ===
+{extra_context}
+
+=== TASK ===
+Give specific, personalized advice that directly addresses what the user mentioned.
+- If they say they already own shares (e.g. "I have $500 of AMZN"), factor that into your advice.
+- If they mention a savings goal, relate the strategy to that goal.
+- If they mention news or events, include that in your analysis.
+- Be concrete, practical, and use plain English. No jargon.
+
+Return ONLY valid JSON (no markdown fences):
+{{
+  "personal_advice": "<2-4 sentence advice tailored to their specific situation>",
+  "context_risks": ["<risk specific to their situation>", "<risk 2>", "<risk 3>"],
+  "context_actions": ["<concrete action 1 for their situation>", "<action 2>", "<action 3>"]
 }}
 """
 
@@ -93,15 +178,25 @@ class ManagerAgent:
         technical_signal: Dict,
         sentiment_signal: Dict,
         risk_plan: Dict,
+        extra_context: str = "",
+        recurring_amount: float = 0.0,
+        recurring_period: str = "monthly",
     ) -> Dict:
         """
         Return the final recommendation dict:
         {decision, confidence, explanation, key_risks, next_steps}
         """
+        recurring_info = (
+            f"${recurring_amount:,.0f} added {recurring_period}"
+            if recurring_amount > 0
+            else "None"
+        )
         prompt = _PROMPT_TEMPLATE.format(
             ticker=ticker,
             investment_amount=investment_amount,
             risk_tolerance=risk_tolerance,
+            recurring_info=recurring_info,
+            extra_context=extra_context.strip() if extra_context else "None provided.",
             technical_signal=technical_signal.get("signal", "NEUTRAL"),
             technical_score=technical_signal.get("score", 0.0),
             rsi=technical_signal.get("rsi", 50.0),
@@ -128,6 +223,155 @@ class ManagerAgent:
         return self._deterministic_recommendation(
             technical_signal, sentiment_signal, ticker
         )
+
+    def generate_trade_opportunities(
+        self,
+        ticker: str,
+        investment_amount: float,
+        trade_frequency: str,
+        horizon: str,
+        technical_signal: Dict,
+        sentiment_signal: Dict,
+        extra_context: str = "",
+        recurring_amount: float = 0.0,
+        recurring_period: str = "monthly",
+    ) -> list:
+        """
+        Return a list of actionable trade opportunities in plain English.
+        Each item: {stock, action, reason, price_range}
+        """
+        score = sentiment_signal.get("score", 0.0)
+        if score > 0.1:
+            sentiment_label = "positive"
+        elif score < -0.1:
+            sentiment_label = "negative"
+        else:
+            sentiment_label = "mixed"
+
+        recurring_info = (
+            f"${recurring_amount:,.0f} added {recurring_period}"
+            if recurring_amount > 0
+            else "None"
+        )
+        prompt = _TRADE_OPPORTUNITIES_PROMPT.format(
+            ticker=ticker,
+            investment_amount=investment_amount,
+            trade_frequency=trade_frequency,
+            horizon=horizon,
+            recurring_info=recurring_info,
+            extra_context=extra_context.strip() if extra_context else "None provided.",
+            technical_signal=technical_signal.get("signal", "NEUTRAL"),
+            rsi=technical_signal.get("rsi", 50.0),
+            sentiment_label=sentiment_label,
+        )
+
+        if self._gemini_available:
+            result = self._call_gemini_list(prompt)
+            if result:
+                validated = []
+                for item in result:
+                    if isinstance(item, dict) and "stock" in item and "action" in item:
+                        validated.append({
+                            "stock": item.get("stock", ticker),
+                            "action": item.get("action", "HOLD").upper(),
+                            "reason": item.get("reason", ""),
+                            "price_range": item.get("price_range", "current market price"),
+                        })
+                if validated:
+                    return validated
+
+        # Deterministic fallback
+        sig = technical_signal.get("signal", "NEUTRAL")
+        action_map = {"BUY": "BUY", "SELL": "SELL"}
+        action = action_map.get(sig, "HOLD")
+        reason_map = {
+            "BUY": "Technical indicators suggest a buying opportunity right now",
+            "SELL": "Technical indicators suggest caution — consider reducing exposure",
+            "HOLD": "No strong signal — hold your current position and wait",
+        }
+        return [{"stock": ticker, "action": action, "reason": reason_map[action], "price_range": "current market price"}]
+
+    def generate_context_advice(
+        self,
+        ticker: str,
+        investment_amount: float,
+        risk_tolerance: str,
+        horizon: str,
+        technical_signal: Dict,
+        sentiment_signal: Dict,
+        extra_context: str,
+        recurring_amount: float = 0.0,
+        recurring_period: str = "monthly",
+    ) -> Optional[Dict]:
+        """
+        Generate personalized advice based on the user's extra context.
+        Returns {personal_advice, context_risks, context_actions} or None.
+        """
+        if not extra_context or not extra_context.strip():
+            return None
+
+        score = sentiment_signal.get("score", 0.0)
+        sentiment_label = "positive" if score > 0.1 else ("negative" if score < -0.1 else "mixed")
+        recurring_info = (
+            f"${recurring_amount:,.0f} added {recurring_period}"
+            if recurring_amount > 0
+            else "None"
+        )
+
+        prompt = _CONTEXT_ADVICE_PROMPT.format(
+            ticker=ticker,
+            investment_amount=investment_amount,
+            risk_tolerance=risk_tolerance,
+            horizon=horizon,
+            recurring_info=recurring_info,
+            technical_signal=technical_signal.get("signal", "NEUTRAL"),
+            rsi=technical_signal.get("rsi", 50.0),
+            sentiment_label=sentiment_label,
+            extra_context=extra_context.strip(),
+        )
+
+        if self._gemini_available:
+            result = self._call_gemini(prompt)
+            if result and "personal_advice" in result:
+                return result
+
+        return None
+
+    def suggest_new_stocks(
+        self,
+        current_ticker: str,
+        investment_amount: float,
+        technical_signal: Dict,
+        sentiment_signal: Dict,
+        remaining_pct: float = 60.0,
+    ) -> list:
+        """
+        Suggest 2-3 other stocks/ETFs the user could consider with remaining capital.
+        Returns list of {ticker, reason}.
+        """
+        prompt = _STOCK_DISCOVERY_PROMPT.format(
+            ticker=current_ticker,
+            remaining_pct=remaining_pct,
+        )
+
+        if self._gemini_available:
+            result = self._call_gemini_list(prompt)
+            if result:
+                validated = []
+                for item in result:
+                    if isinstance(item, dict) and "ticker" in item:
+                        if item["ticker"].upper() != current_ticker.upper():
+                            validated.append({
+                                "ticker": item.get("ticker", "").upper(),
+                                "reason": item.get("reason", ""),
+                            })
+                if validated:
+                    return validated[:3]
+
+        return [
+            {"ticker": "SPY", "reason": "Broad US market ETF — steady long-term growth with low risk"},
+            {"ticker": "QQQ", "reason": "Top tech companies ETF — strong growth potential"},
+        ]
 
     def synthesize_signals(
         self,
@@ -178,6 +422,29 @@ class ManagerAgent:
             return self._extract_partial(message.text if "message" in dir() else "")
         except Exception as exc:
             logger.error("Gemini API call failed: %s", exc)
+            return None
+
+    def _call_gemini_list(self, prompt: str) -> Optional[list]:
+        """Like _call_gemini but expects a JSON array at the top level."""
+        try:
+            message = self._client.models.generate_content(
+                model=config.GEMINI_MODEL,
+                contents=prompt,
+            )
+            raw = message.text.strip()
+            raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
+            raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
+            result = json.loads(raw)
+            if isinstance(result, list):
+                return result
+            # Gemini may wrap the list in a dict key
+            if isinstance(result, dict):
+                for v in result.values():
+                    if isinstance(v, list):
+                        return v
+            return None
+        except Exception as exc:
+            logger.error("Gemini list call failed: %s", exc)
             return None
 
     def _extract_partial(self, text: str) -> Optional[Dict]:

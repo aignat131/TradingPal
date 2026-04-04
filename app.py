@@ -156,7 +156,7 @@ def main() -> None:
         render_trade(sentiment_analyzer, manager_agent)
     else:
         from ui.pages.backtest_viewer import render as render_backtest
-        render_backtest()
+        render_backtest(manager_agent=manager_agent)
 
 
 def _inside_streamlit() -> bool:
