@@ -121,6 +121,42 @@ Based on ALL signals above and the personal context, return ONLY valid JSON (no 
 }}
 """
 
+_PORTFOLIO_PROMPT = """\
+You are TradingPal-AI, a portfolio advisor helping a beginner investor.
+
+=== USER PROFILE ===
+Budget:          ${budget:,.2f}
+Risk Tolerance:  {risk}
+Time Horizon:    {horizon}
+Recurring:       {recurring_info}
+
+=== AVAILABLE ASSETS & TECHNICAL SIGNALS ===
+{signals_table}
+
+=== TASK ===
+Based on the user's profile and the technical signals above, rank the top 10 assets from
+highest profit potential to lowest FOR THIS SPECIFIC USER.
+
+Consider:
+- Risk tolerance: Low → prefer stable large-caps & ETFs; High → OK with volatile crypto/growth stocks
+- Time horizon: Intraday → prefer strong short-term momentum; Long-term → prefer fundamentals + trend
+- RSI <30 = oversold (buy opportunity), RSI >70 = overbought (exercise caution)
+- SMA trend: bullish = upward trend, bearish = downward trend
+- Technical score: -1 to +1, higher = stronger buy signal
+
+Return ONLY valid JSON array (no markdown fences), exactly 10 items sorted highest to lowest:
+[
+  {{
+    "ticker": "SYMBOL",
+    "signal": "BUY" | "SELL" | "HOLD",
+    "score": <float 0.0-1.0, profit potential for this user>,
+    "reasoning": "<2 concise plain-English sentences explaining why>",
+    "suggested_allocation": <float, % of budget to allocate if BUY, else 0>
+  }},
+  ...
+]
+"""
+
 _CONTEXT_ADVICE_PROMPT = """\
 You are TradingPal-AI, a personalized financial advisor.
 
@@ -336,6 +372,82 @@ class ManagerAgent:
                 return result
 
         return None
+
+    def generate_portfolio_recommendations(
+        self,
+        budget: float,
+        risk: str,
+        horizon: str,
+        signals: Dict[str, Dict],
+        recurring_amount: float = 0.0,
+        recurring_period: str = "monthly",
+    ) -> list:
+        """
+        Rank all provided tickers by profit potential for the user.
+        Returns a list of up to 10 dicts: {ticker, signal, score, reasoning, suggested_allocation}
+        """
+        recurring_info = (
+            f"${recurring_amount:,.0f} added {recurring_period}"
+            if recurring_amount > 0
+            else "None"
+        )
+
+        # Build signals table string
+        rows = ["Ticker | Signal | Tech Score | RSI  | SMA Trend | Volatility"]
+        rows.append("-" * 65)
+        for ticker, sig in signals.items():
+            rows.append(
+                f"{ticker:<8} | {sig.get('signal', 'NEUTRAL'):<6} | "
+                f"{sig.get('score', 0.0):+.3f}      | "
+                f"{sig.get('rsi', 50.0):<5.1f} | "
+                f"{sig.get('sma_trend', 'neutral'):<9} | "
+                f"{sig.get('volatility', 0.0):.1f}%"
+            )
+        signals_table = "\n".join(rows)
+
+        prompt = _PORTFOLIO_PROMPT.format(
+            budget=budget,
+            risk=risk,
+            horizon=horizon,
+            recurring_info=recurring_info,
+            signals_table=signals_table,
+        )
+
+        if self._gemini_available:
+            result = self._call_gemini_list(prompt)
+            if result:
+                validated = []
+                for item in result:
+                    if isinstance(item, dict) and "ticker" in item and "signal" in item:
+                        validated.append({
+                            "ticker": item.get("ticker", "").upper(),
+                            "signal": item.get("signal", "HOLD").upper(),
+                            "score": float(item.get("score", 0.5)),
+                            "reasoning": item.get("reasoning", ""),
+                            "suggested_allocation": float(item.get("suggested_allocation", 0)),
+                        })
+                if validated:
+                    return validated[:10]
+
+        # Deterministic fallback: sort by technical score
+        items = []
+        for ticker, sig in signals.items():
+            tech_score = sig.get("score", 0.0)
+            rsi = sig.get("rsi", 50.0)
+            signal = sig.get("signal", "HOLD")
+            profit_potential = round((tech_score + 1) / 2, 3)  # map [-1,1] → [0,1]
+            items.append({
+                "ticker": ticker,
+                "signal": signal,
+                "score": profit_potential,
+                "reasoning": (
+                    f"Technical score {tech_score:+.2f} with RSI at {rsi:.0f}. "
+                    f"SMA trend is {sig.get('sma_trend', 'neutral')}."
+                ),
+                "suggested_allocation": round(100 / len(signals), 1) if signal == "BUY" else 0,
+            })
+        items.sort(key=lambda x: x["score"], reverse=True)
+        return items[:10]
 
     def suggest_new_stocks(
         self,

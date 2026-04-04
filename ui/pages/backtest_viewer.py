@@ -197,11 +197,12 @@ def render(manager_agent=None) -> None:
     # Tabbed display
     # ------------------------------------------------------------------
     st.divider()
-    tab_rsi, tab_dca, tab_hybrid, tab_cmp = st.tabs([
+    tab_rsi, tab_dca, tab_hybrid, tab_cmp, tab_pred = st.tabs([
         "RSI + News (AI-Driven)",
         "DCA (Time-Based)",
         "Hybrid",
         "Strategy Comparison",
+        "Prediction Comparison",
     ])
 
     with tab_rsi:
@@ -255,6 +256,9 @@ def render(manager_agent=None) -> None:
         st.subheader("Equity Curves — All Strategies")
         fig_cmp = _build_comparison_chart([result_rsi, result_dca, result_hybrid], ticker, initial_capital)
         st.plotly_chart(fig_cmp, use_container_width=True)
+
+    with tab_pred:
+        _render_prediction_comparison(result_rsi, ticker, initial_capital)
 
     # ------------------------------------------------------------------
     # Export
@@ -471,6 +475,341 @@ def _render_comparison_table(results: List[Dict]) -> None:
             f"All strategies lost value in this period. "
             f"**{best_label}** lost the least ({best_return:+.2f}%)."
         )
+
+
+def _render_prediction_comparison(result_rsi: Dict, ticker: str, initial_capital: float) -> None:
+    """Render the Prediction Comparison tab.
+
+    Shows two things:
+    1. Signal accuracy: for each BUY/SELL signal, did the price move in the predicted direction?
+    2. Predicted portfolio (RSI+News equity curve) vs Buy-and-Hold (the actual market outcome).
+    """
+    import numpy as np
+
+    st.markdown(
+        "**How accurate were the system's predictions?**  \n"
+        "Each BUY/SELL signal is checked against what the price actually did over the following "
+        "trading days. A BUY is *correct* if the price rises; a SELL is *correct* if it falls.  \n"
+        "The second section compares the RSI+News portfolio against simply buying and holding the "
+        "stock — the no-skill baseline that represents true market reality."
+    )
+
+    signals_df = result_rsi.get("signals")
+    if signals_df is None or signals_df.empty:
+        st.warning("No signal data available for prediction comparison.")
+        return
+
+    if "composite_signal" not in signals_df.columns:
+        st.info(
+            "Composite signals are not available. This tab requires the RSI + News backtest "
+            "to have run successfully."
+        )
+        return
+
+    # ------------------------------------------------------------------ #
+    # Section 1 — Signal accuracy
+    # ------------------------------------------------------------------ #
+    st.subheader("Signal Accuracy Analysis")
+    forward_days = st.select_slider(
+        "Prediction horizon (trading days after signal)",
+        options=[3, 5, 10, 15, 20],
+        value=5,
+        help=(
+            "How many trading days after a signal to measure whether the "
+            "direction prediction was correct."
+        ),
+    )
+
+    close = signals_df["close"]
+    outcomes = []
+    for i, (dt, sig) in enumerate(signals_df["composite_signal"].items()):
+        if sig not in ("BUY", "SELL"):
+            continue
+        future_idx = i + forward_days
+        if future_idx >= len(close):
+            continue
+        entry_price = close.iloc[i]
+        future_price = close.iloc[future_idx]
+        ret_pct = (future_price - entry_price) / entry_price * 100
+        correct = (sig == "BUY" and ret_pct > 0) or (sig == "SELL" and ret_pct < 0)
+        outcomes.append({
+            "date": dt,
+            "signal": sig,
+            "entry_price": entry_price,
+            "future_price": future_price,
+            "future_return_pct": ret_pct,
+            "correct": correct,
+        })
+
+    if not outcomes:
+        st.warning("No BUY or SELL signals were generated in this period.")
+    else:
+        outcomes_df = pd.DataFrame(outcomes)
+        buy_df = outcomes_df[outcomes_df["signal"] == "BUY"]
+        sell_df = outcomes_df[outcomes_df["signal"] == "SELL"]
+        total = len(outcomes_df)
+        overall_acc = outcomes_df["correct"].sum() / total * 100
+        buy_acc = (buy_df["correct"].sum() / len(buy_df) * 100) if len(buy_df) > 0 else 0.0
+        sell_acc = (sell_df["correct"].sum() / len(sell_df) * 100) if len(sell_df) > 0 else 0.0
+
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        mc1.metric(
+            "Overall Accuracy",
+            f"{overall_acc:.1f}%",
+            f"{int(outcomes_df['correct'].sum())}/{total} correct",
+        )
+        mc2.metric(
+            "BUY Accuracy",
+            f"{buy_acc:.1f}%",
+            f"{len(buy_df)} BUY signals",
+        )
+        mc3.metric(
+            "SELL Accuracy",
+            f"{sell_acc:.1f}%",
+            f"{len(sell_df)} SELL signals",
+        )
+        mc4.metric("Horizon", f"+{forward_days}d", "trading days forward")
+
+        fig_pred = _build_prediction_chart(signals_df, outcomes_df, ticker, forward_days)
+        st.plotly_chart(fig_pred, use_container_width=True)
+
+        with st.expander(f"Signal outcome details ({total} signals)", expanded=False):
+            disp = outcomes_df.copy()
+            disp["date"] = pd.to_datetime(disp["date"]).dt.strftime("%Y-%m-%d")
+            disp["entry_price"] = disp["entry_price"].map("${:.2f}".format)
+            disp["future_price"] = disp["future_price"].map("${:.2f}".format)
+            disp["future_return_pct"] = disp["future_return_pct"].map("{:+.2f}%".format)
+            disp["correct"] = disp["correct"].map({True: "Correct", False: "Wrong"})
+            disp.columns = [
+                "Date", "Signal", "Entry Price",
+                f"Price +{forward_days}d", f"Return +{forward_days}d", "Outcome",
+            ]
+            st.dataframe(disp, use_container_width=True)
+
+    # ------------------------------------------------------------------ #
+    # Section 2 — Predicted portfolio vs Buy-and-Hold
+    # ------------------------------------------------------------------ #
+    st.divider()
+    st.subheader("Predicted Portfolio vs. Buy-and-Hold (Reality)")
+    st.caption(
+        "Buy-and-Hold: invest all capital on day 1 and never sell. "
+        "This is the no-skill baseline — it represents what the market actually delivered."
+    )
+
+    equity_curve = result_rsi.get("equity_curve", [])
+    if not equity_curve or signals_df.empty:
+        st.info("Equity curve data not available.")
+        return
+
+    # Compute buy-and-hold curve from actual price data
+    first_price = signals_df["close"].iloc[0]
+    shares_held = initial_capital / first_price
+    bah_dates = signals_df.index.tolist()
+    bah_values = (signals_df["close"] * shares_held).tolist()
+
+    eq_dates = [e["date"] for e in equity_curve]
+    eq_values = [e["value"] for e in equity_curve]
+
+    bah_final = bah_values[-1] if bah_values else initial_capital
+    pred_final = eq_values[-1] if eq_values else initial_capital
+    bah_return = (bah_final - initial_capital) / initial_capital * 100
+    pred_return = (pred_final - initial_capital) / initial_capital * 100
+    diff_pp = pred_return - bah_return
+
+    rc1, rc2, rc3 = st.columns(3)
+    rc1.metric(
+        "RSI+News Return",
+        f"{pred_return:+.2f}%",
+        f"Final ${pred_final:,.2f}",
+    )
+    rc2.metric(
+        "Buy-and-Hold Return",
+        f"{bah_return:+.2f}%",
+        f"Final ${bah_final:,.2f}",
+    )
+    rc3.metric(
+        "Alpha (RSI+News vs B&H)",
+        f"{diff_pp:+.2f}pp",
+        "positive = predictions added value",
+        delta_color="normal",
+    )
+
+    fig_bah = _build_vs_buyandhold_chart(
+        eq_dates, eq_values, bah_dates, bah_values, initial_capital, ticker
+    )
+    st.plotly_chart(fig_bah, use_container_width=True)
+
+
+def _build_prediction_chart(
+    signals_df: pd.DataFrame,
+    outcomes_df: pd.DataFrame,
+    ticker: str,
+    forward_days: int,
+) -> go.Figure:
+    """2-panel chart: candlestick with outcome-coloured signal markers + return bar chart."""
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+        row_heights=[0.65, 0.35],
+        subplot_titles=(
+            f"{ticker} — Signals vs. Actual Price",
+            f"Actual {forward_days}-Day Return After Signal",
+        ),
+    )
+
+    dates = signals_df.index.tolist()
+
+    # Candlestick
+    fig.add_trace(
+        go.Candlestick(
+            x=dates,
+            open=signals_df["open"], high=signals_df["high"],
+            low=signals_df["low"], close=signals_df["close"],
+            name="Price",
+            increasing_line_color="#00d4aa", decreasing_line_color="#ff4b4b",
+        ),
+        row=1, col=1,
+    )
+
+    # SMA lines
+    if "sma_short" in signals_df.columns:
+        fig.add_trace(go.Scatter(
+            x=dates, y=signals_df["sma_short"], name=f"SMA {config.SMA_SHORT}",
+            line=dict(color="#ffa500", width=1.5), opacity=0.8, showlegend=True,
+        ), row=1, col=1)
+    if "sma_long" in signals_df.columns:
+        fig.add_trace(go.Scatter(
+            x=dates, y=signals_df["sma_long"], name=f"SMA {config.SMA_LONG}",
+            line=dict(color="#9b59b6", width=1.5, dash="dot"), opacity=0.8, showlegend=True,
+        ), row=1, col=1)
+
+    # Signal markers coloured by correctness
+    _groups = [
+        ("BUY",  True,  "triangle-up",   "#00d4aa", "BUY — Correct",   0.99, "low"),
+        ("BUY",  False, "triangle-up",   "#ff4b4b", "BUY — Wrong",     0.99, "low"),
+        ("SELL", True,  "triangle-down", "#00d4aa", "SELL — Correct",  1.01, "high"),
+        ("SELL", False, "triangle-down", "#ff4b4b", "SELL — Wrong",    1.01, "high"),
+    ]
+    for sig, corr, symbol, color, label, mult, side in _groups:
+        subset = outcomes_df[(outcomes_df["signal"] == sig) & (outcomes_df["correct"] == corr)]
+        if subset.empty:
+            continue
+        idx = signals_df.index.isin(subset["date"])
+        y_col = signals_df[side][idx] * mult
+        fig.add_trace(go.Scatter(
+            x=signals_df.index[idx],
+            y=y_col,
+            mode="markers",
+            name=label,
+            marker=dict(symbol=symbol, color=color, size=13,
+                        line=dict(color="#ffffff", width=1)),
+            hovertemplate=f"<b>{label}</b><br>%{{x}}<br>${{%text}}<extra></extra>",
+            text=[f"{p:,.2f}" for p in signals_df["close"][idx]],
+        ), row=1, col=1)
+
+    # Bar chart: return after each signal
+    bar_colors = ["#00d4aa" if c else "#ff4b4b" for c in outcomes_df["correct"]]
+    bar_labels = [
+        f"{s} {'Correct' if c else 'Wrong'}"
+        for s, c in zip(outcomes_df["signal"], outcomes_df["correct"])
+    ]
+    fig.add_trace(go.Bar(
+        x=outcomes_df["date"],
+        y=outcomes_df["future_return_pct"],
+        name=f"Return +{forward_days}d",
+        marker_color=bar_colors,
+        customdata=bar_labels,
+        hovertemplate="<b>%{customdata}</b><br>%{x}<br>Return: %{y:+.2f}%<extra></extra>",
+        showlegend=False,
+    ), row=2, col=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="#888888", opacity=0.5, row=2, col=1)
+
+    fig.update_layout(
+        height=750, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+        font=dict(color="#e0e0e0", size=12),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                    bgcolor="rgba(14,17,23,0.8)"),
+        xaxis_rangeslider_visible=False, hovermode="x unified",
+        margin=dict(l=60, r=20, t=60, b=20),
+    )
+    fig.update_xaxes(
+        rangeselector=dict(
+            buttons=[
+                dict(count=1, label="1M", step="month", stepmode="backward"),
+                dict(count=3, label="3M", step="month", stepmode="backward"),
+                dict(count=6, label="6M", step="month", stepmode="backward"),
+                dict(step="all", label="All"),
+            ],
+            bgcolor="#1a1a2e", activecolor="#00d4aa", font=dict(color="#e0e0e0"),
+        ),
+        row=1, col=1,
+    )
+    for row in range(1, 3):
+        fig.update_xaxes(gridcolor="#1a1a2e", showline=True, linecolor="#333", row=row, col=1)
+        fig.update_yaxes(gridcolor="#1a1a2e", showline=True, linecolor="#333", row=row, col=1)
+    fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+    fig.update_yaxes(title_text="Return (%)", row=2, col=1)
+    return fig
+
+
+def _build_vs_buyandhold_chart(
+    eq_dates: list,
+    eq_values: list,
+    bah_dates: list,
+    bah_values: list,
+    initial_capital: float,
+    ticker: str,
+) -> go.Figure:
+    """Single-panel chart comparing RSI+News equity curve vs buy-and-hold."""
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=eq_dates,
+        y=eq_values,
+        name="RSI+News (predicted)",
+        line=dict(color="#00d4aa", width=2),
+        fill="tozeroy",
+        fillcolor="rgba(0,212,170,0.08)",
+        hovertemplate="<b>RSI+News: $%{y:,.2f}</b><br>%{x}<extra></extra>",
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=bah_dates,
+        y=bah_values,
+        name="Buy-and-Hold (reality)",
+        line=dict(color="#ffa500", width=2, dash="dot"),
+        hovertemplate="<b>Buy-and-Hold: $%{y:,.2f}</b><br>%{x}<extra></extra>",
+    ))
+
+    fig.add_hline(
+        y=initial_capital,
+        line_dash="dash", line_color="#888888", opacity=0.5,
+        annotation_text="Starting capital", annotation_position="bottom right",
+    )
+
+    fig.update_layout(
+        height=380,
+        title=f"{ticker} — RSI+News Predicted Portfolio vs. Buy-and-Hold Reality",
+        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+        font=dict(color="#e0e0e0", size=12),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        hovermode="x unified",
+        margin=dict(l=60, r=20, t=60, b=20),
+        xaxis=dict(
+            gridcolor="#1a1a2e", showline=True, linecolor="#333",
+            rangeselector=dict(
+                buttons=[
+                    dict(count=1, label="1M", step="month", stepmode="backward"),
+                    dict(count=3, label="3M", step="month", stepmode="backward"),
+                    dict(count=6, label="6M", step="month", stepmode="backward"),
+                    dict(count=1, label="YTD", step="year", stepmode="todate"),
+                    dict(step="all", label="All"),
+                ],
+                bgcolor="#1a1a2e", activecolor="#00d4aa", font=dict(color="#e0e0e0"),
+            ),
+        ),
+        yaxis=dict(gridcolor="#1a1a2e", showline=True, linecolor="#333", title_text="Value ($)"),
+    )
+    return fig
 
 
 def _build_comparison_chart(
