@@ -11,17 +11,41 @@ import streamlit as st
 # Signal Gauge
 # ---------------------------------------------------------------------------
 
-def display_signal_gauge(signal: str, confidence: float) -> None:
-    """Render a Plotly gauge showing the trading signal and confidence."""
+def display_signal_gauge(signal: str, confidence: float, score: float = None) -> None:
+    """
+    Render a Plotly gauge showing the trading signal and confidence.
+
+    *score* (optional): raw technical score in [-1, 1]. When provided, drives the
+    gauge needle continuously so NEUTRAL values still show where in the range
+    the asset sits (e.g. score=-0.15 → gauge at ~42, not stuck at 50).
+    """
     color_map = {
         "BUY": "#00d4aa",
         "SELL": "#ff4b4b",
         "HOLD": "#ffa500",
         "NEUTRAL": "#888888",
     }
-    signal_value_map = {"BUY": 85, "SELL": 15, "HOLD": 50, "NEUTRAL": 50}
-    value = signal_value_map.get(signal.upper(), 50)
-    color = color_map.get(signal.upper(), "#888888")
+
+    if score is not None:
+        # Continuous mapping: score -1 → 0, score 0 → 50, score +1 → 100
+        value = round((score + 1) * 50, 1)
+        value = max(5.0, min(95.0, value))  # keep needle visible
+    else:
+        # Fallback: use confidence to widen from centre
+        if signal.upper() == "BUY":
+            value = round(50 + confidence * 45, 1)
+        elif signal.upper() == "SELL":
+            value = round(50 - confidence * 45, 1)
+        else:
+            value = 50.0
+
+    # Derive colour from final value even if signal is NEUTRAL
+    if value >= 62:
+        color = "#00d4aa"
+    elif value <= 38:
+        color = "#ff4b4b"
+    else:
+        color = color_map.get(signal.upper(), "#888888")
 
     fig = go.Figure(
         go.Indicator(

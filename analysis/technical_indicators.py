@@ -72,13 +72,19 @@ class TechnicalAnalyzer:
         """
         Generate a trading signal string: 'BUY', 'SELL', or 'NEUTRAL'.
 
-        Rules:
-        - BUY  : RSI < oversold threshold AND short SMA > long SMA (golden cross)
-        - SELL : RSI > overbought threshold AND short SMA < long SMA (death cross)
-        - NEUTRAL: everything else
+        Rules (strongest → weakest):
+        - Strong BUY  : RSI < oversold (30) AND golden cross
+        - Medium BUY  : RSI < mild oversold (42) AND golden cross
+        - Soft BUY    : RSI < oversold (30) alone
+        - Strong SELL : RSI > overbought (70) AND death cross
+        - Medium SELL : RSI > mild overbought (58) AND death cross
+        - Soft SELL   : RSI > overbought (70) alone
+        - NEUTRAL     : everything else
         """
         oversold = config.RSI_OVERSOLD
         overbought = config.RSI_OVERBOUGHT
+        mild_oversold = config.RSI_MILD_OVERSOLD
+        mild_overbought = config.RSI_MILD_OVERBOUGHT
 
         bullish_momentum = sma_short > sma_long
         bearish_momentum = sma_short < sma_long
@@ -87,7 +93,10 @@ class TechnicalAnalyzer:
             return "BUY"
         if rsi > overbought and bearish_momentum:
             return "SELL"
-        # Softer signals
+        if rsi < mild_oversold and bullish_momentum:
+            return "BUY"
+        if rsi > mild_overbought and bearish_momentum:
+            return "SELL"
         if rsi < oversold:
             return "BUY"
         if rsi > overbought:

@@ -164,6 +164,67 @@ class AccuracyReporter:
 
         return output.getvalue(), accuracy
 
+    def generate_report_no_accuracy(
+        self,
+        backtest_result: Dict,
+    ) -> str:
+        """
+        Generate a CSV report string without any lookahead accuracy columns.
+        Safe to use for DCA/Hybrid results that have no composite_signal column.
+        """
+        signals_df = backtest_result.get("signals", pd.DataFrame())
+        trades = backtest_result.get("trades", [])
+        metrics = backtest_result.get("metrics", {})
+        strategy = backtest_result.get("strategy", "")
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        writer.writerow(["TradingPal-AI Backtest Report"])
+        writer.writerow(["Ticker", backtest_result.get("ticker", "")])
+        writer.writerow(["Strategy", strategy])
+        writer.writerow(
+            ["Period", f"{backtest_result.get('start_date','')} to {backtest_result.get('end_date','')}"]
+        )
+        writer.writerow(["Initial Capital", f"${backtest_result.get('initial_capital', 0):,.2f}"])
+        writer.writerow([])
+
+        writer.writerow(["=== PERFORMANCE METRICS ==="])
+        for k, v in metrics.items():
+            writer.writerow([k.replace("_", " ").title(), v])
+        writer.writerow([])
+
+        if trades:
+            writer.writerow(["=== TRADES ==="])
+            writer.writerow(
+                ["Entry Date", "Exit Date", "Entry Price", "Exit Price",
+                 "Shares", "P&L ($)", "Return (%)"]
+            )
+            for t in trades:
+                writer.writerow([
+                    t.get("entry_date", ""),
+                    t.get("exit_date", ""),
+                    t.get("entry_price", ""),
+                    t.get("exit_price", ""),
+                    t.get("shares", ""),
+                    t.get("pnl", ""),
+                    t.get("return_pct", ""),
+                ])
+            writer.writerow([])
+
+        if not signals_df.empty:
+            writer.writerow(["=== DAILY PRICES ==="])
+            cols = ["close", "rsi", "tech_signal", "composite_signal"]
+            available = [c for c in cols if c in signals_df.columns]
+            writer.writerow(["Date"] + available)
+            for date, row in signals_df[available].iterrows():
+                writer.writerow(
+                    [date.strftime("%Y-%m-%d") if hasattr(date, "strftime") else date]
+                    + list(row)
+                )
+
+        return output.getvalue()
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------

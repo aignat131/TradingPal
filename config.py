@@ -29,6 +29,19 @@ SMA_SHORT: int = 20
 SMA_LONG: int = 50
 RSI_OVERSOLD: float = 30.0
 RSI_OVERBOUGHT: float = 70.0
+RSI_MILD_OVERSOLD: float = 47.0   # medium-strength BUY zone (RSI below this + bullish SMA → BUY)
+RSI_MILD_OVERBOUGHT: float = 53.0  # medium-strength SELL zone (RSI above this + bearish SMA → SELL)
+COMPOSITE_SIGNAL_THRESHOLD: float = 0.05  # composite score to trigger BUY/SELL
+
+# ---------------------------------------------------------------------------
+# Stock watchlist — used in ticker dropdowns across all pages
+# ---------------------------------------------------------------------------
+STOCK_WATCHLIST: list = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META",
+    "JPM", "NFLX", "AMD", "DIS", "V", "MA", "SPY", "QQQ",
+    "BRK-B", "BTC-USD", "ETH-USD", "SOL-USD",
+    "Other (type manually)",
+]
 
 # ---------------------------------------------------------------------------
 # Risk management
