@@ -32,3 +32,11 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# TradingPal-AI
+data_cache/*
+!data_cache/.gitkeep
+data/finsen_data/
+
+# Streamlit
+.streamlit/secrets.toml
