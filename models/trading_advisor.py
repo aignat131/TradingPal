@@ -1,6 +1,6 @@
 import os
 import re
-import anthropic
+from google import genai
 
 _client = None
 
@@ -11,7 +11,9 @@ def _get_client():
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY is not set in environment variables.")
-        _client = anthropic.Anthropic(api_key=api_key)
+        # _client = anthropic.Anthropic(api_key=api_key)
+        # _client = OpenAI(api_key=api_key)
+        _client = genai.Client(api_key=api_key)
     return _client
 
 
@@ -61,13 +63,28 @@ def get_trade_advice(
     )
 
     client = _get_client()
-    message = client.messages.create(
-        model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
+
+    # message = client.messages.create(
+    #     model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+    #     max_tokens=1024,
+    #     messages=[{"role": "user", "content": prompt}],
+    # )
+
+    # message= client.chat.completions.create(
+    #     model="gpt-4o-mini",  # cheaper and fast, or use "gpt-4-turbo"
+    #     max_tokens=1024,
+    #     messages=[{"role": "user", "content": prompt}],
+    # )
+    for model in client.models.list():
+        print(model.name)
+    message = client.models.generate_content(
+        model="gemini-2.5-flash-lite",  # or "gemini-1.5-flash"
+        contents=prompt
     )
 
-    response_text = message.content[0].text.strip()
+    # response_text = message.content[0].text.strip()
+    # response_text = message.choices[0].message.content
+    response_text = message.text
     verdict = _extract_verdict(response_text)
     return response_text, verdict
 
