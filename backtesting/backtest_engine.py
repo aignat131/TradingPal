@@ -187,11 +187,12 @@ class BacktestEngine:
 
         eq_values = [e["value"] for e in equity_curve]
         final_value = eq_values[-1]
-        total_return = (final_value - initial_capital) / initial_capital * 100
+        total_invested = equity_curve[-1].get("total_invested", initial_capital)
+        total_return = (final_value - total_invested) / total_invested * 100
 
         # Annualised return
         n_days = len(equity_curve)
-        ann_return = ((final_value / initial_capital) ** (252 / max(n_days, 1)) - 1) * 100
+        ann_return = ((final_value / total_invested) ** (252 / max(n_days, 1)) - 1) * 100
 
         # Daily returns for Sharpe
         eq_series = pd.Series(eq_values)

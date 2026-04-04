@@ -37,9 +37,25 @@ COMPOSITE_SIGNAL_THRESHOLD: float = 0.05  # composite score to trigger BUY/SELL
 # Stock watchlist — used in ticker dropdowns across all pages
 # ---------------------------------------------------------------------------
 STOCK_WATCHLIST: list = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META",
-    "JPM", "NFLX", "AMD", "DIS", "V", "MA", "SPY", "QQQ",
-    "BRK-B", "BTC-USD", "ETH-USD", "SOL-USD",
+    # --- Mega-cap tech ---
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+    # --- Semiconductors ---
+    "AMD", "INTC", "QCOM", "AVGO", "MU", "TSM",
+    # --- Financials ---
+    "JPM", "V", "MA", "PYPL", "SQ", "COIN",
+    # --- Consumer & media ---
+    "NFLX", "DIS", "BABA", "SHOP",
+    # --- Enterprise software ---
+    "CRM", "ADBE", "ORCL", "NOW", "CSCO", "IBM",
+    # --- Growth / speculative ---
+    "PLTR", "UBER",
+    # --- ETFs ---
+    "SPY", "QQQ", "IWM", "VTI", "GLD", "XLK", "XLF",
+    # --- Blue-chip ---
+    "BRK-B", "JNJ", "PG", "KO",
+    # --- Crypto ---
+    "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD",
+    "ADA-USD", "DOGE-USD", "AVAX-USD",
     "Other (type manually)",
 ]
 

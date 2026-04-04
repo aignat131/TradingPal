@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 
 _METRIC_HELP = {
     "Total Return": (
-        "Total profit or loss as a % of your starting capital. "
-        "Example: +15% means $10,000 grew to $11,500."
+        "Total profit or loss as a % of all capital invested (initial + recurring contributions). "
+        "Example: +15% means every dollar you put in grew by 15 cents."
     ),
     "Annualised Return": (
         "Projects the return as if the same rate continued for exactly one year. "
@@ -137,61 +137,80 @@ def render(manager_agent=None) -> None:
             "Run Backtest", type="primary", use_container_width=True
         )
 
-    if not run_btn:
+    if run_btn:
+        if not ticker:
+            st.error("Please enter a ticker symbol.")
+            return
+        if start_date >= end_date:
+            st.error("Start date must be before end date.")
+            return
+
+        # ------------------------------------------------------------------
+        # Run all three strategies and store in session state
+        # ------------------------------------------------------------------
+        with st.spinner(f"Running 3 strategy comparisons for {ticker} ({start_date} → {end_date})..."):
+            engine = BacktestEngine(sentiment_cache=cache)
+            result_rsi = engine.run_backtest(
+                ticker=ticker,
+                start_date=str(start_date),
+                end_date=str(end_date),
+                initial_capital=initial_capital,
+                risk_percent=risk_pct,
+                recurring_amount=recurring_amount,
+                recurring_period=recurring_period,
+            )
+            result_dca = engine.run_dca_backtest(
+                ticker=ticker,
+                start_date=str(start_date),
+                end_date=str(end_date),
+                initial_capital=initial_capital,
+                frequency=dca_frequency,
+                recurring_amount=recurring_amount,
+                recurring_period=recurring_period,
+            )
+            result_hybrid = engine.run_hybrid_backtest(
+                ticker=ticker,
+                start_date=str(start_date),
+                end_date=str(end_date),
+                initial_capital=initial_capital,
+                risk_percent=risk_pct,
+                frequency=dca_frequency,
+                recurring_amount=recurring_amount,
+                recurring_period=recurring_period,
+            )
+
+        if result_rsi["signals"].empty and result_dca["signals"].empty:
+            st.error(
+                f"No data available for **{ticker}** in the selected period. "
+                "Check the ticker symbol and date range."
+            )
+            return
+
+        st.session_state["bt_result_rsi"] = result_rsi
+        st.session_state["bt_result_dca"] = result_dca
+        st.session_state["bt_result_hybrid"] = result_hybrid
+        st.session_state["bt_ticker"] = ticker
+        st.session_state["bt_initial_capital"] = initial_capital
+        st.session_state["bt_dca_frequency"] = dca_frequency
+        st.session_state["bt_recurring_amount"] = recurring_amount
+        st.session_state["bt_recurring_period"] = recurring_period
+
+    elif "bt_result_rsi" not in st.session_state:
         st.info(
             "Select a stock, set your capital, and click **Run Backtest** to compare "
             "DCA, RSI+News, and Hybrid strategies side-by-side."
         )
         return
 
-    if not ticker:
-        st.error("Please enter a ticker symbol.")
-        return
-
-    if start_date >= end_date:
-        st.error("Start date must be before end date.")
-        return
-
-    # ------------------------------------------------------------------
-    # Run all three strategies
-    # ------------------------------------------------------------------
-    with st.spinner(f"Running 3 strategy comparisons for {ticker} ({start_date} → {end_date})..."):
-        engine = BacktestEngine(sentiment_cache=cache)
-        result_rsi = engine.run_backtest(
-            ticker=ticker,
-            start_date=str(start_date),
-            end_date=str(end_date),
-            initial_capital=initial_capital,
-            risk_percent=risk_pct,
-            recurring_amount=recurring_amount,
-            recurring_period=recurring_period,
-        )
-        result_dca = engine.run_dca_backtest(
-            ticker=ticker,
-            start_date=str(start_date),
-            end_date=str(end_date),
-            initial_capital=initial_capital,
-            frequency=dca_frequency,
-            recurring_amount=recurring_amount,
-            recurring_period=recurring_period,
-        )
-        result_hybrid = engine.run_hybrid_backtest(
-            ticker=ticker,
-            start_date=str(start_date),
-            end_date=str(end_date),
-            initial_capital=initial_capital,
-            risk_percent=risk_pct,
-            frequency=dca_frequency,
-            recurring_amount=recurring_amount,
-            recurring_period=recurring_period,
-        )
-
-    if result_rsi["signals"].empty and result_dca["signals"].empty:
-        st.error(
-            f"No data available for **{ticker}** in the selected period. "
-            "Check the ticker symbol and date range."
-        )
-        return
+    # Read results from session state (works both on first run and on slider reruns)
+    result_rsi        = st.session_state["bt_result_rsi"]
+    result_dca        = st.session_state["bt_result_dca"]
+    result_hybrid     = st.session_state["bt_result_hybrid"]
+    ticker            = st.session_state["bt_ticker"]
+    initial_capital   = st.session_state["bt_initial_capital"]
+    dca_frequency     = st.session_state["bt_dca_frequency"]
+    recurring_amount  = st.session_state.get("bt_recurring_amount", 0.0)
+    recurring_period  = st.session_state.get("bt_recurring_period", "monthly")
 
     # ------------------------------------------------------------------
     # Tabbed display
@@ -221,8 +240,9 @@ def render(manager_agent=None) -> None:
         _render_rsi_trade_log(result_rsi["trades"])
 
     with tab_dca:
+        _dca_freq_label = "week" if dca_frequency == "weekly" else "month"
         st.markdown(
-            f"**DCA (Dollar-Cost Averaging)**: Invests a fixed amount every {dca_frequency} "
+            f"**DCA (Dollar-Cost Averaging)**: Invests a fixed amount every {_dca_freq_label} "
             "regardless of price or news. Simple, consistent, and removes emotion from investing."
         )
         _render_metrics(result_dca)
@@ -258,7 +278,7 @@ def render(manager_agent=None) -> None:
         st.plotly_chart(fig_cmp, use_container_width=True)
 
     with tab_pred:
-        _render_prediction_comparison(result_rsi, ticker, initial_capital)
+        _render_prediction_comparison(result_rsi, ticker, initial_capital, recurring_amount, recurring_period)
 
     # ------------------------------------------------------------------
     # Export
@@ -477,7 +497,7 @@ def _render_comparison_table(results: List[Dict]) -> None:
         )
 
 
-def _render_prediction_comparison(result_rsi: Dict, ticker: str, initial_capital: float) -> None:
+def _render_prediction_comparison(result_rsi: Dict, ticker: str, initial_capital: float, recurring_amount: float = 0.0, recurring_period: str = "monthly") -> None:
     """Render the Prediction Comparison tab.
 
     Shows two things:
@@ -592,8 +612,9 @@ def _render_prediction_comparison(result_rsi: Dict, ticker: str, initial_capital
     st.divider()
     st.subheader("Predicted Portfolio vs. Buy-and-Hold (Reality)")
     st.caption(
-        "Buy-and-Hold: invest all capital on day 1 and never sell. "
-        "This is the no-skill baseline — it represents what the market actually delivered."
+        "Buy-and-Hold: invest all capital on day 1 and never sell"
+        + (f", plus ${recurring_amount:,.0f} added every {'week' if recurring_period == 'weekly' else 'month'}" if recurring_amount > 0 else "")
+        + ". This is the no-skill baseline — it represents what the market actually delivered."
     )
 
     equity_curve = result_rsi.get("equity_curve", [])
@@ -601,19 +622,30 @@ def _render_prediction_comparison(result_rsi: Dict, ticker: str, initial_capital
         st.info("Equity curve data not available.")
         return
 
-    # Compute buy-and-hold curve from actual price data
-    first_price = signals_df["close"].iloc[0]
-    shares_held = initial_capital / first_price
+    # Compute buy-and-hold curve from actual price data (with recurring contributions)
     bah_dates = signals_df.index.tolist()
-    bah_values = (signals_df["close"] * shares_held).tolist()
+    step = 5 if recurring_period == "weekly" else 21
+    contrib_dates: set = set()
+    if recurring_amount > 0:
+        contrib_dates = {signals_df.index[i] for i in range(0, len(signals_df.index), step)}
+
+    shares_held = initial_capital / signals_df["close"].iloc[0]
+    bah_values = []
+    total_bah_invested = initial_capital
+    for date, close in signals_df["close"].items():
+        if date in contrib_dates:
+            shares_held += recurring_amount / close
+            total_bah_invested += recurring_amount
+        bah_values.append(shares_held * close)
 
     eq_dates = [e["date"] for e in equity_curve]
     eq_values = [e["value"] for e in equity_curve]
 
     bah_final = bah_values[-1] if bah_values else initial_capital
     pred_final = eq_values[-1] if eq_values else initial_capital
-    bah_return = (bah_final - initial_capital) / initial_capital * 100
-    pred_return = (pred_final - initial_capital) / initial_capital * 100
+    bah_return = (bah_final - total_bah_invested) / total_bah_invested * 100
+    pred_total_invested = result_rsi.get("equity_curve", [{}])[-1].get("total_invested", initial_capital) if equity_curve else initial_capital
+    pred_return = (pred_final - pred_total_invested) / pred_total_invested * 100
     diff_pp = pred_return - bah_return
 
     rc1, rc2, rc3 = st.columns(3)

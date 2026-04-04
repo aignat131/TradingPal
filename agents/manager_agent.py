@@ -144,14 +144,16 @@ Consider:
 - SMA trend: bullish = upward trend, bearish = downward trend
 - Technical score: -1 to +1, higher = stronger buy signal
 
-Return ONLY valid JSON array (no markdown fences), exactly 10 items sorted highest to lowest:
+Return ONLY valid JSON array (no markdown fences), exactly 10 items sorted highest to lowest.
+Only use "BUY" or "SELL" for signal — never "HOLD".
+For BUY items, suggested_allocation MUST be a positive number representing percent of budget (e.g. 20.0 means 20%). All BUY allocations should sum to roughly 100.
 [
   {{
     "ticker": "SYMBOL",
-    "signal": "BUY" | "SELL" | "HOLD",
+    "signal": "BUY" | "SELL",
     "score": <float 0.0-1.0, profit potential for this user>,
     "reasoning": "<2 concise plain-English sentences explaining why>",
-    "suggested_allocation": <float, % of budget to allocate if BUY, else 0>
+    "suggested_allocation": <float, percent of budget, e.g. 15.0 for 15%. Must be > 0 for BUY, 0 for SELL>
   }},
   ...
 ]
@@ -223,7 +225,7 @@ class ManagerAgent:
         {decision, confidence, explanation, key_risks, next_steps}
         """
         recurring_info = (
-            f"${recurring_amount:,.0f} added {recurring_period}"
+            f"${recurring_amount:,.0f} added {'per week' if recurring_period == 'weekly' else 'per month'}"
             if recurring_amount > 0
             else "None"
         )
@@ -285,7 +287,7 @@ class ManagerAgent:
             sentiment_label = "mixed"
 
         recurring_info = (
-            f"${recurring_amount:,.0f} added {recurring_period}"
+            f"${recurring_amount:,.0f} added {'per week' if recurring_period == 'weekly' else 'per month'}"
             if recurring_amount > 0
             else "None"
         )
@@ -349,7 +351,7 @@ class ManagerAgent:
         score = sentiment_signal.get("score", 0.0)
         sentiment_label = "positive" if score > 0.1 else ("negative" if score < -0.1 else "mixed")
         recurring_info = (
-            f"${recurring_amount:,.0f} added {recurring_period}"
+            f"${recurring_amount:,.0f} added {'per week' if recurring_period == 'weekly' else 'per month'}"
             if recurring_amount > 0
             else "None"
         )
@@ -387,7 +389,7 @@ class ManagerAgent:
         Returns a list of up to 10 dicts: {ticker, signal, score, reasoning, suggested_allocation}
         """
         recurring_info = (
-            f"${recurring_amount:,.0f} added {recurring_period}"
+            f"${recurring_amount:,.0f} added {'per week' if recurring_period == 'weekly' else 'per month'}"
             if recurring_amount > 0
             else "None"
         )
@@ -419,14 +421,31 @@ class ManagerAgent:
                 validated = []
                 for item in result:
                     if isinstance(item, dict) and "ticker" in item and "signal" in item:
+                        sig = item.get("signal", "BUY").upper()
+                        if sig not in ("BUY", "SELL"):
+                            sig = "BUY"
                         validated.append({
                             "ticker": item.get("ticker", "").upper(),
-                            "signal": item.get("signal", "HOLD").upper(),
+                            "signal": sig,
                             "score": float(item.get("score", 0.5)),
                             "reasoning": item.get("reasoning", ""),
                             "suggested_allocation": float(item.get("suggested_allocation", 0)),
                         })
                 if validated:
+                    # Detect if Gemini returned decimals (0.0–1.0) instead of percentages
+                    buy_allocs = [v["suggested_allocation"] for v in validated if v["signal"] == "BUY" and v["suggested_allocation"] > 0]
+                    if buy_allocs and max(buy_allocs) <= 1.0:
+                        for v in validated:
+                            v["suggested_allocation"] = round(v["suggested_allocation"] * 100, 1)
+                    # Fill in zero BUY allocations with even split of remaining budget
+                    buy_items = [v for v in validated if v["signal"] == "BUY"]
+                    allocated = sum(v["suggested_allocation"] for v in buy_items if v["suggested_allocation"] > 0)
+                    zero_buys = [v for v in buy_items if v["suggested_allocation"] == 0]
+                    if zero_buys:
+                        remaining = max(100.0 - allocated, 0.0)
+                        per_item = round(remaining / len(zero_buys), 1) if remaining > 0 else round(100.0 / max(len(buy_items), 1), 1)
+                        for v in zero_buys:
+                            v["suggested_allocation"] = per_item
                     return validated[:10]
 
         # Deterministic fallback: sort by technical score
@@ -434,7 +453,8 @@ class ManagerAgent:
         for ticker, sig in signals.items():
             tech_score = sig.get("score", 0.0)
             rsi = sig.get("rsi", 50.0)
-            signal = sig.get("signal", "HOLD")
+            raw_signal = sig.get("signal", "NEUTRAL")
+            signal = "BUY" if raw_signal == "BUY" else "SELL"
             profit_potential = round((tech_score + 1) / 2, 3)  # map [-1,1] → [0,1]
             items.append({
                 "ticker": ticker,
@@ -444,10 +464,16 @@ class ManagerAgent:
                     f"Technical score {tech_score:+.2f} with RSI at {rsi:.0f}. "
                     f"SMA trend is {sig.get('sma_trend', 'neutral')}."
                 ),
-                "suggested_allocation": round(100 / len(signals), 1) if signal == "BUY" else 0,
+                "suggested_allocation": 0,
             })
         items.sort(key=lambda x: x["score"], reverse=True)
-        return items[:10]
+        top = items[:10]
+        buy_items = [v for v in top if v["signal"] == "BUY"]
+        if buy_items:
+            per_item = round(100.0 / len(buy_items), 1)
+            for v in buy_items:
+                v["suggested_allocation"] = per_item
+        return top
 
     def suggest_new_stocks(
         self,

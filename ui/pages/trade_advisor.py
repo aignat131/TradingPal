@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 WATCHLIST = [t for t in config.STOCK_WATCHLIST if t != "Other (type manually)"]
 
 # Color / background maps reused across card helpers
-_COLOR = {"BUY": "#00d4aa", "SELL": "#ff4b4b", "HOLD": "#ffa500"}
-_BG    = {"BUY": "#001f18",  "SELL": "#1f0000",  "HOLD": "#1a1000"}
+_COLOR = {"BUY": "#00d4aa", "SELL": "#ff4b4b"}
+_BG    = {"BUY": "#001f18",  "SELL": "#1f0000"}
 
 
 def render(
@@ -173,11 +173,14 @@ def render(
 def _render_card(rank: int, item: dict, budget: float) -> None:
     """Render a single investment opportunity card."""
     ticker    = item.get("ticker", "")
-    signal    = item.get("signal", "HOLD").upper()
+    signal    = item.get("signal", "BUY").upper()
+    if signal not in ("BUY", "SELL"):
+        signal = "BUY"
     score     = max(0.0, min(1.0, item.get("score", 0.5)))
     reasoning = html.escape(item.get("reasoning", ""))
     alloc_pct = item.get("suggested_allocation", 0.0)
     alloc_amt = budget * alloc_pct / 100.0
+    news_url  = f"https://finance.yahoo.com/quote/{ticker}/news/"
 
     color = _COLOR.get(signal, "#888888")
     bg    = _BG.get(signal, "#0e1117")
@@ -214,11 +217,13 @@ def _render_card(rank: int, item: dict, budget: float) -> None:
         unsafe_allow_html=True,
     )
 
-    # --- Reasoning (plain text via st.markdown, no HTML injection risk) ---
+    # --- Reasoning + news link ---
     st.markdown(
         f'<div style="background:{bg};border-left:6px solid {color};border-right:1px solid {color}33;'
-        f'padding:10px 24px 4px 24px;">'
-        f'<p style="color:#d0d0d0;font-size:0.95em;line-height:1.6;margin:0;">{reasoning}</p>'
+        f'padding:10px 24px 8px 24px;">'
+        f'<p style="color:#d0d0d0;font-size:0.95em;line-height:1.6;margin:0 0 6px 0;">{reasoning}</p>'
+        f'<a href="{news_url}" target="_blank" style="color:{color};font-size:0.78em;opacity:0.8;'
+        f'text-decoration:none;">Latest news ↗</a>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -253,10 +258,11 @@ def _render_recurring_summary(
 ) -> None:
     import plotly.graph_objects as go
 
+    period_label = "per week" if recurring_period == "weekly" else "per month"
     st.subheader("Recurring Savings Projection")
     st.caption(
-        f"Investing **${recurring_amount:,.0f} {recurring_period}** on top of your "
-        f"initial **${budget:,.0f}** — here's how your total invested capital grows."
+        f"Investing **${recurring_amount:,.0f} {period_label}** on top of your "
+        f"initial **${budget:,.0f}** — here's how your total invested capital grows over time."
     )
 
     periods_per_year = 52 if recurring_period == "weekly" else 12
@@ -303,7 +309,7 @@ def _render_recurring_summary(
     final_invested = budget + recurring_amount * total_periods
     c1, c2, c3 = st.columns(3)
     c1.metric("Initial Investment", f"${budget:,.0f}")
-    c2.metric(f"Total Added ({recurring_period.title()})", f"${recurring_amount * total_periods:,.0f}")
+    c2.metric(f"Total Added ({period_label.title()})", f"${recurring_amount * total_periods:,.0f}")
     c3.metric("Total Invested by End", f"${final_invested:,.0f}")
 
 
