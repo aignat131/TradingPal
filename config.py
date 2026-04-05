@@ -7,18 +7,26 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _secret(key: str, default: str = "") -> str:
+    """Return value from st.secrets if running in Streamlit, else os.getenv."""
+    try:
+        import streamlit as st
+        return st.secrets.get(key, os.getenv(key, default))
+    except Exception:
+        return os.getenv(key, default)
+
+
 # ---------------------------------------------------------------------------
 # API Keys — supports GEMINI_API_KEY and legacy ANTHROPIC_API_KEY fallback
 # ---------------------------------------------------------------------------
-GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
-NEWS_API_KEY: str = os.getenv("NEWS_API_KEY", "")
+GEMINI_API_KEY: str = _secret("GEMINI_API_KEY") or _secret("ANTHROPIC_API_KEY")
+NEWS_API_KEY: str = _secret("NEWS_API_KEY")
 
 # ---------------------------------------------------------------------------
 # Data paths
 # ---------------------------------------------------------------------------
-FINSEN_DATA_PATH: str = os.getenv(
-    "FINSEN_DATA_PATH", "data/finsen_data"
-)
+FINSEN_DATA_PATH: str = _secret("FINSEN_DATA_PATH", "data/finsen_data")
 CACHE_DIR: str = "data_cache"
 
 # ---------------------------------------------------------------------------
