@@ -134,7 +134,7 @@ def render(manager_agent=None) -> None:
             height=80,
         )
         run_btn = st.form_submit_button(
-            "Run Backtest", type="primary", use_container_width=True
+            "Run Backtest", type="primary", width='stretch'
         )
 
     if run_btn:
@@ -236,7 +236,7 @@ def render(manager_agent=None) -> None:
                 result_rsi["signals"], result_rsi["equity_curve"],
                 result_rsi["trades"], initial_capital, ticker,
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         _render_rsi_trade_log(result_rsi["trades"])
 
     with tab_dca:
@@ -252,7 +252,7 @@ def render(manager_agent=None) -> None:
                 result_dca["trades"], initial_capital, ticker,
                 buy_log=result_dca.get("buy_log", []),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         _render_buy_log(result_dca.get("buy_log", []), strategy="DCA")
 
     with tab_hybrid:
@@ -267,7 +267,7 @@ def render(manager_agent=None) -> None:
                 result_hybrid["trades"], initial_capital, ticker,
                 buy_log=result_hybrid.get("buy_log", []),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         _render_buy_log(result_hybrid.get("buy_log", []), strategy="Hybrid")
 
     with tab_cmp:
@@ -275,7 +275,7 @@ def render(manager_agent=None) -> None:
         _render_comparison_table([result_rsi, result_dca, result_hybrid])
         st.subheader("Equity Curves — All Strategies")
         fig_cmp = _build_comparison_chart([result_rsi, result_dca, result_hybrid], ticker, initial_capital)
-        st.plotly_chart(fig_cmp, use_container_width=True)
+        st.plotly_chart(fig_cmp, width='stretch')
 
     with tab_pred:
         _render_prediction_comparison(result_rsi, ticker, initial_capital, recurring_amount, recurring_period)
@@ -292,14 +292,14 @@ def render(manager_agent=None) -> None:
     )
     result_map = {"RSI+News": result_rsi, "DCA": result_dca, "Hybrid": result_hybrid}
 
-    if st.button("Export Report (CSV)", use_container_width=True):
+    if st.button("Export Report (CSV)", width='stretch'):
         csv_str = reporter.generate_report_no_accuracy(result_map[export_strategy])
         st.download_button(
             label="Download CSV",
             data=csv_str,
             file_name=f"tradingpal_backtest_{ticker}_{export_strategy}_{start_date}_{end_date}.csv",
             mime="text/csv",
-            use_container_width=True,
+            width='stretch',
         )
 
     # ------------------------------------------------------------------
@@ -423,7 +423,7 @@ def _render_rsi_trade_log(trades: list) -> None:
         for col in ["entry_date", "exit_date"]:
             if col in trades_df.columns:
                 trades_df[col] = pd.to_datetime(trades_df[col]).dt.strftime("%Y-%m-%d")
-        st.dataframe(trades_df, use_container_width=True)
+        st.dataframe(trades_df, width='stretch')
 
 
 def _render_buy_log(buy_log: list, strategy: str = "DCA") -> None:
@@ -452,7 +452,7 @@ def _render_buy_log(buy_log: list, strategy: str = "DCA") -> None:
         df = pd.DataFrame(buy_log)
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width='stretch')
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +477,7 @@ def _render_comparison_table(results: List[Dict]) -> None:
         })
 
     df = pd.DataFrame(rows).set_index("Strategy")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
 
     best_idx = max(range(3), key=lambda i: results[i]["metrics"]["total_return_pct"])
     best_label = labels[best_idx]
@@ -591,7 +591,7 @@ def _render_prediction_comparison(result_rsi: Dict, ticker: str, initial_capital
         mc4.metric("Horizon", f"+{forward_days}d", "trading days forward")
 
         fig_pred = _build_prediction_chart(signals_df, outcomes_df, ticker, forward_days)
-        st.plotly_chart(fig_pred, use_container_width=True)
+        st.plotly_chart(fig_pred, width='stretch')
 
         with st.expander(f"Signal outcome details ({total} signals)", expanded=False):
             disp = outcomes_df.copy()
@@ -604,7 +604,7 @@ def _render_prediction_comparison(result_rsi: Dict, ticker: str, initial_capital
                 "Date", "Signal", "Entry Price",
                 f"Price +{forward_days}d", f"Return +{forward_days}d", "Outcome",
             ]
-            st.dataframe(disp, use_container_width=True)
+            st.dataframe(disp, width='stretch')
 
     # ------------------------------------------------------------------ #
     # Section 2 — Predicted portfolio vs Buy-and-Hold
@@ -669,7 +669,7 @@ def _render_prediction_comparison(result_rsi: Dict, ticker: str, initial_capital
     fig_bah = _build_vs_buyandhold_chart(
         eq_dates, eq_values, bah_dates, bah_values, initial_capital, ticker
     )
-    st.plotly_chart(fig_bah, use_container_width=True)
+    st.plotly_chart(fig_bah, width='stretch')
 
 
 def _build_prediction_chart(

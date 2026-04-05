@@ -76,7 +76,7 @@ def display_signal_gauge(signal: str, confidence: float, score: float = None) ->
         paper_bgcolor="rgba(0,0,0,0)",
         font={"color": "#e0e0e0"},
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ def display_risk_meter(risk_score: float) -> None:
         paper_bgcolor="rgba(0,0,0,0)",
         font={"color": "#e0e0e0"},
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 # ---------------------------------------------------------------------------

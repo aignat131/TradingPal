@@ -134,7 +134,11 @@ You are TradingPal-AI, a portfolio advisor helping a beginner investor.
 Budget:          ${budget:,.2f}
 Risk Tolerance:  {risk}
 Time Horizon:    {horizon}
+Trade Frequency: {trade_frequency}
 Recurring:       {recurring_info}
+
+=== ALLOCATION RULES BASED ON TRADE FREQUENCY ===
+{allocation_rules}
 
 === AVAILABLE ASSETS & TECHNICAL SIGNALS ===
 {signals_table}
@@ -146,13 +150,14 @@ highest profit potential to lowest FOR THIS SPECIFIC USER.
 Consider:
 - Risk tolerance: Low → prefer stable large-caps & ETFs; High → OK with volatile crypto/growth stocks
 - Time horizon: Intraday → prefer strong short-term momentum; Long-term → prefer fundamentals + trend
+- Trade frequency allocation rules above MUST be strictly followed
 - RSI <30 = oversold (buy opportunity), RSI >70 = overbought (exercise caution)
 - SMA trend: bullish = upward trend, bearish = downward trend
 - Technical score: -1 to +1, higher = stronger buy signal
 
 Return ONLY valid JSON array (no markdown fences), exactly 10 items sorted highest to lowest.
 Only use "BUY" or "SELL" for signal — never "HOLD".
-For BUY items, suggested_allocation MUST be a positive number representing percent of budget (e.g. 20.0 means 20%). All BUY allocations should sum to roughly 100.
+For BUY items, suggested_allocation MUST follow the allocation rules above.
 [
   {{
     "ticker": "SYMBOL",
@@ -381,12 +386,43 @@ class ManagerAgent:
 
         return None
 
+    # Total deployment caps by frequency: {normal_pct, good_pct}
+    # "good" tier activates when average BUY score >= _GOOD_OPPORTUNITY_THRESHOLD
+    _FREQ_CAPS = {
+        "daily":   {"normal": 20.0, "good": 35.0},
+        "weekly":  {"normal": 40.0, "good": 50.0},
+        "monthly": {"normal": 55.0, "good": 65.0},
+    }
+    _GOOD_OPPORTUNITY_THRESHOLD = 0.65  # avg BUY score above this → use "good" cap
+
+    _FREQ_RULES = {
+        "daily": (
+            "User is a DAILY trader — preserve capital for next day's trades. "
+            "Total BUY allocations: 20% on a normal day, up to 35% only when signals are exceptionally strong. "
+            "Higher-ranked stocks MUST get a larger allocation than lower-ranked ones. "
+            "Prefer highly liquid assets with strong intraday momentum."
+        ),
+        "weekly": (
+            "User is a WEEKLY trader — re-evaluates every week. "
+            "Total BUY allocations: 40% on a normal day, up to 50% when signals are strong. "
+            "Higher-ranked stocks MUST get a larger allocation than lower-ranked ones. "
+            "Prefer assets with clear short-term trends."
+        ),
+        "monthly": (
+            "User is a MONTHLY/PASSIVE investor — long-term horizon. "
+            "Total BUY allocations: 55% on a normal day, up to 65% when signals are strong. "
+            "Higher-ranked stocks MUST get a larger allocation than lower-ranked ones. "
+            "Prefer fundamentally strong assets and ETFs."
+        ),
+    }
+
     def generate_portfolio_recommendations(
         self,
         budget: float,
         risk: str,
         horizon: str,
         signals: Dict[str, Dict],
+        trade_frequency: str = "monthly",
         recurring_amount: float = 0.0,
         recurring_period: str = "monthly",
     ) -> list:
@@ -394,6 +430,15 @@ class ManagerAgent:
         Rank all provided tickers by profit potential for the user.
         Returns a list of up to 10 dicts: {ticker, signal, score, reasoning, suggested_allocation}
         """
+        freq_key = "daily" if "daily" in trade_frequency.lower() else (
+            "weekly" if "weekly" in trade_frequency.lower() else "monthly"
+        )
+        caps = self._FREQ_CAPS[freq_key]
+        allocation_rules = self._FREQ_RULES[freq_key]
+        # last_is_good_day set after we see the scores; default False
+        self.last_is_good_day: bool = False
+        self.last_avg_score: float = 0.0
+
         recurring_info = (
             f"${recurring_amount:,.0f} added {'per week' if recurring_period == 'weekly' else 'per month'}"
             if recurring_amount > 0
@@ -417,6 +462,8 @@ class ManagerAgent:
             budget=budget,
             risk=risk,
             horizon=horizon,
+            trade_frequency=trade_frequency,
+            allocation_rules=allocation_rules,
             recurring_info=recurring_info,
             signals_table=signals_table,
         )
@@ -437,21 +484,30 @@ class ManagerAgent:
                         "suggested_allocation": float(item.get("suggested_allocation", 0)),
                     })
             if validated:
-                # Detect if AI returned decimals (0.0–1.0) instead of percentages
-                buy_allocs = [v["suggested_allocation"] for v in validated if v["signal"] == "BUY" and v["suggested_allocation"] > 0]
-                if buy_allocs and max(buy_allocs) <= 1.0:
-                    for v in validated:
-                        v["suggested_allocation"] = round(v["suggested_allocation"] * 100, 1)
-                # Fill in zero BUY allocations with even split of remaining budget
+                validated = validated[:10]
                 buy_items = [v for v in validated if v["signal"] == "BUY"]
-                allocated = sum(v["suggested_allocation"] for v in buy_items if v["suggested_allocation"] > 0)
-                zero_buys = [v for v in buy_items if v["suggested_allocation"] == 0]
-                if zero_buys:
-                    remaining = max(100.0 - allocated, 0.0)
-                    per_item = round(remaining / len(zero_buys), 1) if remaining > 0 else round(100.0 / max(len(buy_items), 1), 1)
-                    for v in zero_buys:
-                        v["suggested_allocation"] = per_item
-                return validated[:10]
+
+                # Detect good-opportunity day based on avg BUY score
+                if buy_items:
+                    avg_score = sum(v["score"] for v in buy_items) / len(buy_items)
+                    self.last_avg_score = round(avg_score, 3)
+                    self.last_is_good_day = avg_score >= self._GOOD_OPPORTUNITY_THRESHOLD
+                total_limit = caps["good"] if self.last_is_good_day else caps["normal"]
+
+                # Score-weighted descending allocation: rank 1 gets more than rank 2 etc.
+                if buy_items:
+                    scores = [v["score"] for v in buy_items]
+                    total_weight = sum(scores)
+                    if total_weight > 0:
+                        for v, w in zip(buy_items, scores):
+                            v["suggested_allocation"] = round((w / total_weight) * total_limit, 1)
+                    else:
+                        # All scores zero → equal split
+                        per = round(total_limit / len(buy_items), 1)
+                        for v in buy_items:
+                            v["suggested_allocation"] = per
+
+                return validated
 
         # Deterministic fallback: sort by technical score
         items = []
@@ -475,9 +531,18 @@ class ManagerAgent:
         top = items[:10]
         buy_items = [v for v in top if v["signal"] == "BUY"]
         if buy_items:
-            per_item = round(100.0 / len(buy_items), 1)
-            for v in buy_items:
-                v["suggested_allocation"] = per_item
+            avg_score = sum(v["score"] for v in buy_items) / len(buy_items)
+            self.last_avg_score = round(avg_score, 3)
+            self.last_is_good_day = avg_score >= self._GOOD_OPPORTUNITY_THRESHOLD
+            total_limit = caps["good"] if self.last_is_good_day else caps["normal"]
+            total_weight = sum(v["score"] for v in buy_items)
+            if total_weight > 0:
+                for v in buy_items:
+                    v["suggested_allocation"] = round((v["score"] / total_weight) * total_limit, 1)
+            else:
+                per = round(total_limit / len(buy_items), 1)
+                for v in buy_items:
+                    v["suggested_allocation"] = per
         return top
 
     def suggest_new_stocks(
