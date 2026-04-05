@@ -21,6 +21,7 @@ def _secret(key: str, default: str = "") -> str:
 # API Keys — supports GEMINI_API_KEY and legacy ANTHROPIC_API_KEY fallback
 # ---------------------------------------------------------------------------
 GEMINI_API_KEY: str = _secret("GEMINI_API_KEY") or _secret("ANTHROPIC_API_KEY")
+GROQ_API_KEY: str = _secret("GROQ_API_KEY")
 NEWS_API_KEY: str = _secret("NEWS_API_KEY")
 
 # ---------------------------------------------------------------------------
@@ -86,4 +87,5 @@ BACKTEST_END: str = "2024-12-31"
 # Model identifiers
 # ---------------------------------------------------------------------------
 GEMINI_MODEL: str = "gemini-2.5-flash-lite"
+GROQ_MODEL: str = "llama-3.3-70b-versatile"
 FINBERT_MODEL: str = "ProsusAI/finbert"

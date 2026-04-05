@@ -69,12 +69,18 @@ _FALLBACK_DECISION = {
     "decision": "HOLD",
     "confidence": 0.5,
     "explanation": (
-        "Gemini API is not configured. "
+        "No AI provider is configured. "
         "This recommendation is based on rule-based signal aggregation only."
     ),
     "key_risks": ["API key missing — AI analysis unavailable."],
-    "next_steps": ["Configure GEMINI_API_KEY and retry for full AI analysis."],
+    "next_steps": ["Configure GEMINI_API_KEY or GROQ_API_KEY and retry for full AI analysis."],
 }
+
+# Groq quota/rate-limit error substrings — triggers automatic fallback
+_GEMINI_QUOTA_ERRORS = (
+    "resource_exhausted", "429", "quota", "rate limit", "rateLimitExceeded",
+    "too many requests", "exceeded",
+)
 
 _PROMPT_TEMPLATE = """\
 You are TradingPal-AI, an expert multi-agent investment advisor.
@@ -196,13 +202,16 @@ Return ONLY valid JSON (no markdown fences):
 class ManagerAgent:
     """
     Orchestrates technical, sentiment, and risk agents.
-    Uses Gemini to produce the final recommendation.
+    Uses Gemini (primary) with automatic Groq fallback when quota is exhausted.
     """
 
     def __init__(self) -> None:
         self._client = None
         self._gemini_available = False
+        self._groq_client = None
+        self._groq_available = False
         self._init_gemini()
+        self._init_groq()
 
     # ------------------------------------------------------------------
     # Public API
@@ -252,10 +261,9 @@ class ManagerAgent:
             max_loss=risk_plan.get("max_loss", 0.0),
         )
 
-        if self._gemini_available:
-            result = self._call_gemini(prompt)
-            if result:
-                return result
+        result = self._call_ai(prompt)
+        if result:
+            return result
 
         # Deterministic fallback
         return self._deterministic_recommendation(
@@ -303,20 +311,19 @@ class ManagerAgent:
             sentiment_label=sentiment_label,
         )
 
-        if self._gemini_available:
-            result = self._call_gemini_list(prompt)
-            if result:
-                validated = []
-                for item in result:
-                    if isinstance(item, dict) and "stock" in item and "action" in item:
-                        validated.append({
-                            "stock": item.get("stock", ticker),
-                            "action": item.get("action", "HOLD").upper(),
-                            "reason": item.get("reason", ""),
-                            "price_range": item.get("price_range", "current market price"),
-                        })
-                if validated:
-                    return validated
+        result = self._call_ai_list(prompt)
+        if result:
+            validated = []
+            for item in result:
+                if isinstance(item, dict) and "stock" in item and "action" in item:
+                    validated.append({
+                        "stock": item.get("stock", ticker),
+                        "action": item.get("action", "HOLD").upper(),
+                        "reason": item.get("reason", ""),
+                        "price_range": item.get("price_range", "current market price"),
+                    })
+            if validated:
+                return validated
 
         # Deterministic fallback
         sig = technical_signal.get("signal", "NEUTRAL")
@@ -368,10 +375,9 @@ class ManagerAgent:
             extra_context=extra_context.strip(),
         )
 
-        if self._gemini_available:
-            result = self._call_gemini(prompt)
-            if result and "personal_advice" in result:
-                return result
+        result = self._call_ai(prompt)
+        if result and "personal_advice" in result:
+            return result
 
         return None
 
@@ -415,38 +421,37 @@ class ManagerAgent:
             signals_table=signals_table,
         )
 
-        if self._gemini_available:
-            result = self._call_gemini_list(prompt)
-            if result:
-                validated = []
-                for item in result:
-                    if isinstance(item, dict) and "ticker" in item and "signal" in item:
-                        sig = item.get("signal", "BUY").upper()
-                        if sig not in ("BUY", "SELL"):
-                            sig = "BUY"
-                        validated.append({
-                            "ticker": item.get("ticker", "").upper(),
-                            "signal": sig,
-                            "score": float(item.get("score", 0.5)),
-                            "reasoning": item.get("reasoning", ""),
-                            "suggested_allocation": float(item.get("suggested_allocation", 0)),
-                        })
-                if validated:
-                    # Detect if Gemini returned decimals (0.0–1.0) instead of percentages
-                    buy_allocs = [v["suggested_allocation"] for v in validated if v["signal"] == "BUY" and v["suggested_allocation"] > 0]
-                    if buy_allocs and max(buy_allocs) <= 1.0:
-                        for v in validated:
-                            v["suggested_allocation"] = round(v["suggested_allocation"] * 100, 1)
-                    # Fill in zero BUY allocations with even split of remaining budget
-                    buy_items = [v for v in validated if v["signal"] == "BUY"]
-                    allocated = sum(v["suggested_allocation"] for v in buy_items if v["suggested_allocation"] > 0)
-                    zero_buys = [v for v in buy_items if v["suggested_allocation"] == 0]
-                    if zero_buys:
-                        remaining = max(100.0 - allocated, 0.0)
-                        per_item = round(remaining / len(zero_buys), 1) if remaining > 0 else round(100.0 / max(len(buy_items), 1), 1)
-                        for v in zero_buys:
-                            v["suggested_allocation"] = per_item
-                    return validated[:10]
+        result = self._call_ai_list(prompt)
+        if result:
+            validated = []
+            for item in result:
+                if isinstance(item, dict) and "ticker" in item and "signal" in item:
+                    sig = item.get("signal", "BUY").upper()
+                    if sig not in ("BUY", "SELL"):
+                        sig = "BUY"
+                    validated.append({
+                        "ticker": item.get("ticker", "").upper(),
+                        "signal": sig,
+                        "score": float(item.get("score", 0.5)),
+                        "reasoning": item.get("reasoning", ""),
+                        "suggested_allocation": float(item.get("suggested_allocation", 0)),
+                    })
+            if validated:
+                # Detect if AI returned decimals (0.0–1.0) instead of percentages
+                buy_allocs = [v["suggested_allocation"] for v in validated if v["signal"] == "BUY" and v["suggested_allocation"] > 0]
+                if buy_allocs and max(buy_allocs) <= 1.0:
+                    for v in validated:
+                        v["suggested_allocation"] = round(v["suggested_allocation"] * 100, 1)
+                # Fill in zero BUY allocations with even split of remaining budget
+                buy_items = [v for v in validated if v["signal"] == "BUY"]
+                allocated = sum(v["suggested_allocation"] for v in buy_items if v["suggested_allocation"] > 0)
+                zero_buys = [v for v in buy_items if v["suggested_allocation"] == 0]
+                if zero_buys:
+                    remaining = max(100.0 - allocated, 0.0)
+                    per_item = round(remaining / len(zero_buys), 1) if remaining > 0 else round(100.0 / max(len(buy_items), 1), 1)
+                    for v in zero_buys:
+                        v["suggested_allocation"] = per_item
+                return validated[:10]
 
         # Deterministic fallback: sort by technical score
         items = []
@@ -492,19 +497,18 @@ class ManagerAgent:
             remaining_pct=remaining_pct,
         )
 
-        if self._gemini_available:
-            result = self._call_gemini_list(prompt)
-            if result:
-                validated = []
-                for item in result:
-                    if isinstance(item, dict) and "ticker" in item:
-                        if item["ticker"].upper() != current_ticker.upper():
-                            validated.append({
-                                "ticker": item.get("ticker", "").upper(),
-                                "reason": item.get("reason", ""),
-                            })
-                if validated:
-                    return validated[:3]
+        result = self._call_ai_list(prompt)
+        if result:
+            validated = []
+            for item in result:
+                if isinstance(item, dict) and "ticker" in item:
+                    if item["ticker"].upper() != current_ticker.upper():
+                        validated.append({
+                            "ticker": item.get("ticker", "").upper(),
+                            "reason": item.get("reason", ""),
+                        })
+            if validated:
+                return validated[:3]
 
         return [
             {"ticker": "SPY", "reason": "Broad US market ETF — steady long-term growth with low risk"},
@@ -533,37 +537,86 @@ class ManagerAgent:
 
     def _init_gemini(self) -> None:
         if not config.GEMINI_API_KEY:
-            logger.warning("GEMINI_API_KEY not set — AI mode disabled.")
+            logger.warning("GEMINI_API_KEY not set — Gemini disabled.")
             return
         try:
             from google import genai
-
             self._client = genai.Client(api_key=config.GEMINI_API_KEY)
             self._gemini_available = True
             logger.info("Gemini client initialised (model: %s).", config.GEMINI_MODEL)
         except Exception as exc:
             logger.error("Failed to init Gemini client: %s", exc)
 
-    def _call_gemini(self, prompt: str) -> Optional[Dict]:
+    def _init_groq(self) -> None:
+        if not config.GROQ_API_KEY:
+            logger.info("GROQ_API_KEY not set — Groq fallback disabled.")
+            return
+        try:
+            from groq import Groq
+            self._groq_client = Groq(api_key=config.GROQ_API_KEY)
+            self._groq_available = True
+            logger.info("Groq client initialised (model: %s).", config.GROQ_MODEL)
+        except Exception as exc:
+            logger.error("Failed to init Groq client: %s", exc)
+
+    # --- Unified AI call (Gemini → Groq fallback) ----------------------
+
+    def _call_ai(self, prompt: str) -> Optional[Dict]:
+        """Try Gemini; fall back to Groq on quota/rate-limit errors."""
+        if self._gemini_available:
+            result, quota_hit = self._call_gemini(prompt)
+            if result is not None:
+                return result
+            if quota_hit:
+                logger.warning("Gemini quota exhausted — switching to Groq.")
+                self._gemini_available = False
+        if self._groq_available:
+            return self._call_groq(prompt)
+        return None
+
+    def _call_ai_list(self, prompt: str) -> Optional[list]:
+        """Try Gemini; fall back to Groq on quota/rate-limit errors."""
+        if self._gemini_available:
+            result, quota_hit = self._call_gemini_list(prompt)
+            if result is not None:
+                return result
+            if quota_hit:
+                logger.warning("Gemini quota exhausted — switching to Groq.")
+                self._gemini_available = False
+        if self._groq_available:
+            return self._call_groq_list(prompt)
+        return None
+
+    # --- Gemini --------------------------------------------------------
+
+    @staticmethod
+    def _is_quota_error(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return any(kw in msg for kw in _GEMINI_QUOTA_ERRORS)
+
+    def _call_gemini(self, prompt: str):
+        """Returns (result_dict_or_None, quota_hit_bool)."""
+        message = None
         try:
             message = self._client.models.generate_content(
                 model=config.GEMINI_MODEL,
                 contents=prompt,
             )
             raw = message.text.strip()
-            # Strip markdown code fences if present
             raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
             raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
-            return json.loads(raw)
+            return json.loads(raw), False
         except json.JSONDecodeError as exc:
             logger.warning("Gemini returned invalid JSON: %s", exc)
-            return self._extract_partial(message.text if "message" in dir() else "")
+            partial = self._extract_partial(message.text if message else "")
+            return partial, False
         except Exception as exc:
-            logger.error("Gemini API call failed: %s", exc)
-            return None
+            quota_hit = self._is_quota_error(exc)
+            logger.error("Gemini API call failed%s: %s", " (quota)" if quota_hit else "", exc)
+            return None, quota_hit
 
-    def _call_gemini_list(self, prompt: str) -> Optional[list]:
-        """Like _call_gemini but expects a JSON array at the top level."""
+    def _call_gemini_list(self, prompt: str):
+        """Returns (result_list_or_None, quota_hit_bool)."""
         try:
             message = self._client.models.generate_content(
                 model=config.GEMINI_MODEL,
@@ -574,15 +627,57 @@ class ManagerAgent:
             raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
             result = json.loads(raw)
             if isinstance(result, list):
+                return result, False
+            if isinstance(result, dict):
+                for v in result.values():
+                    if isinstance(v, list):
+                        return v, False
+            return None, False
+        except Exception as exc:
+            quota_hit = self._is_quota_error(exc)
+            logger.error("Gemini list call failed%s: %s", " (quota)" if quota_hit else "", exc)
+            return None, quota_hit
+
+    # --- Groq ----------------------------------------------------------
+
+    def _call_groq(self, prompt: str) -> Optional[Dict]:
+        try:
+            completion = self._groq_client.chat.completions.create(
+                model=config.GROQ_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+            )
+            raw = completion.choices[0].message.content.strip()
+            raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
+            raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.warning("Groq returned invalid JSON: %s", exc)
+            return None
+        except Exception as exc:
+            logger.error("Groq API call failed: %s", exc)
+            return None
+
+    def _call_groq_list(self, prompt: str) -> Optional[list]:
+        try:
+            completion = self._groq_client.chat.completions.create(
+                model=config.GROQ_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+            )
+            raw = completion.choices[0].message.content.strip()
+            raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
+            raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
+            result = json.loads(raw)
+            if isinstance(result, list):
                 return result
-            # Gemini may wrap the list in a dict key
             if isinstance(result, dict):
                 for v in result.values():
                     if isinstance(v, list):
                         return v
             return None
         except Exception as exc:
-            logger.error("Gemini list call failed: %s", exc)
+            logger.error("Groq list call failed: %s", exc)
             return None
 
     def _extract_partial(self, text: str) -> Optional[Dict]:

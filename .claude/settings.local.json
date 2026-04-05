@@ -8,7 +8,8 @@
       "Bash(python -c \"import streamlit; import plotly; print\\('streamlit', streamlit.__version__, '| plotly', plotly.__version__\\)\")",
       "Bash(python -c \"import numpy; print\\('NumPy', numpy.__version__\\)\")",
       "Bash(python:*)",
-      "Bash(ls E:/PycharmProjects/TradingPal/*.py)"
+      "Bash(ls E:/PycharmProjects/TradingPal/*.py)",
+      "Bash(venv/Scripts/python -c \"from groq import Groq; print\\('groq OK'\\)\")"
     ]
   }
 }
