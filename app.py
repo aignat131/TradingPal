@@ -91,7 +91,7 @@ def _render_sidebar(manager_agent) -> str:
 
         page = st.radio(
             "Navigation",
-            ["Trade Advisor", "Backtest Viewer"],
+            ["AI Trade Advisor", "Backtest Viewer", "Math Logic"],
             label_visibility="collapsed",
         )
         st.divider()
@@ -225,12 +225,15 @@ def main() -> None:
 
     page = _render_sidebar(manager_agent)
 
-    if page == "Trade Advisor":
+    if page == "AI Trade Advisor":
         from ui.pages.trade_advisor import render as render_trade
         render_trade(sentiment_analyzer, manager_agent)
-    else:
+    elif page == "Backtest Viewer":
         from ui.pages.backtest_viewer import render as render_backtest
         render_backtest(manager_agent=manager_agent)
+    else:  # Math Logic
+        from ui.pages.rule_advisor import render as render_rules
+        render_rules()
 
 
 def _inside_streamlit() -> bool:
