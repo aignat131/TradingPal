@@ -482,6 +482,123 @@ def _render_rsi_gauge(rsi: float) -> None:
     display_signal_gauge(signal=signal, confidence=abs(score), score=score)
 
 
+def _render_rsi_gauge_0_100(rsi: float) -> None:
+    """Plotly gauge 0–100 with green/yellow/red zones for RSI."""
+    zone = _rsi_zone_label(rsi)
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=rsi,
+        number={"font": {"color": "#f0f0f0", "size": 28}},
+        gauge={
+            "axis": {"range": [0, 100], "tickcolor": "#888", "tickfont": {"color": "#888"}},
+            "bar": {"color": "#ffffff", "thickness": 0.25},
+            "bgcolor": "#1a1a1a",
+            "bordercolor": "#333",
+            "steps": [
+                {"range": [0, 30],  "color": "rgba(0,212,170,0.25)"},
+                {"range": [30, 70], "color": "rgba(255,165,0,0.20)"},
+                {"range": [70, 100],"color": "rgba(255,75,75,0.25)"},
+            ],
+            "threshold": {
+                "line": {"color": "#ffffff", "width": 3},
+                "thickness": 0.8,
+                "value": rsi,
+            },
+        },
+        title={"text": f"RSI — {zone}", "font": {"color": "#aaa", "size": 13}},
+    ))
+    fig.update_layout(
+        height=200,
+        margin=dict(l=20, r=20, t=40, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e0e0e0"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _build_strategy_explanation(
+    strategy_lbl: str, rsi: float, amount: float,
+    budget: float, n_periods: int, objective: str
+) -> str:
+    """Returns an HTML string explaining the strategy decision in plain Romanian."""
+    base_per_period = budget / n_periods if n_periods > 0 else budget
+
+    if objective == "Invest":
+        if strategy_lbl == "DCA Fix":
+            return (
+                f"Ai ales <strong>DCA Fix</strong>. Bugetul tău de <strong>${budget:,.2f}</strong> "
+                f"a fost împărțit în mod egal la cele <strong>{n_periods}</strong> perioade. "
+                f"Nu ținem cont de fluctuațiile pieței pentru această strategie. "
+                f"Suma standard per perioadă: <strong>${base_per_period:,.2f}</strong>."
+            )
+        elif strategy_lbl == "Hibrid":
+            if rsi < 40:
+                factor_txt = "crescut agresiv suma cu 50%"
+                reason = f"RSI-ul indică o piață favorabilă (subevaluată la {rsi:.1f})"
+                tip = " Profităm de prețul mic de azi!"
+            elif rsi > 60:
+                factor_txt = "redus suma cu 50%"
+                reason = f"piața este supraevaluată (RSI: {rsi:.1f})"
+                tip = " Protejăm capitalul în fața prețului ridicat."
+            else:
+                return (
+                    f"Ai ales strategia <strong>Hibrid</strong>. Piața este neutră (RSI: {rsi:.1f}). "
+                    f"Investim suma standard de <strong>${amount:,.2f}</strong> fără ajustări."
+                )
+            return (
+                f"Ai ales strategia <strong>Hibrid</strong>. Suma standard per perioadă ar fi fost "
+                f"<strong>${base_per_period:,.2f}</strong>. Totuși, deoarece {reason}, am {factor_txt}, "
+                f"ajungând la <strong>${amount:,.2f}</strong>.{tip}"
+            )
+        else:  # RSI strategy
+            zone = _rsi_zone_label(rsi)
+            return (
+                f"Ai ales strategia <strong>RSI</strong>. Decizia este declanșată deoarece "
+                f"RSI = <strong>{rsi:.1f}</strong> (zona: {zone}). "
+                f"Suma investită astăzi: <strong>${amount:,.2f}</strong>."
+            )
+    else:  # Cash out
+        if strategy_lbl == "DCA Fix":
+            return (
+                f"Ai ales <strong>DCA Fix — Retragere</strong>. Suma de retras per perioadă: "
+                f"<strong>${amount:,.2f}</strong> (buget împărțit egal la {n_periods} perioade)."
+            )
+        elif strategy_lbl == "Hibrid":
+            return (
+                f"Ai ales strategia <strong>Hibrid — Retragere</strong>. "
+                f"RSI: {rsi:.1f} ({_rsi_zone_label(rsi)}). "
+                f"Suma retrasă astăzi: <strong>${amount:,.2f}</strong>."
+            )
+        else:
+            return (
+                f"Ai ales strategia <strong>RSI — Retragere</strong>. "
+                f"Suma retrasă astăzi: <strong>${amount:,.2f}</strong>."
+            )
+
+
+def _next_action_date(frequency: str) -> str:
+    """Returns a Romanian-formatted next action date string based on frequency."""
+    import datetime
+    _RO_MONTHS = [
+        "", "Ianuarie", "Februarie", "Martie", "Aprilie", "Mai", "Iunie",
+        "Iulie", "August", "Septembrie", "Octombrie", "Noiembrie", "Decembrie",
+    ]
+    today = datetime.date.today()
+    if frequency == "Daily":
+        next_date = today + datetime.timedelta(days=1)
+        label = "mâine"
+    elif frequency == "Weekly":
+        next_date = today + datetime.timedelta(weeks=1)
+        label = "săptămâna viitoare"
+    else:  # Monthly
+        month = today.month % 12 + 1
+        year = today.year + (1 if today.month == 12 else 0)
+        day = min(today.day, [31,28,31,30,31,30,31,31,30,31,30,31][month - 1])
+        next_date = today.replace(year=year, month=month, day=day)
+        label = "luna viitoare"
+    return f"{next_date.day} {_RO_MONTHS[next_date.month]} {next_date.year} ({label})"
+
+
 def _render_portfolio_chart(rows: list[dict]) -> None:
     df = pd.DataFrame(rows)
     action_colors = [
@@ -726,160 +843,233 @@ def render() -> None:
     sim_rows: list = st.session_state["rule_sim_rows"]
     params: dict   = st.session_state["rule_params"]
 
-    action     = first["action"]
-    amount     = first["amount"]
+    action      = first["action"]
+    amount      = first["amount"]
     ticker_disp = params["ticker"]
-    verb       = "invest" if params["objective"] == "Invest" else "sell"
+    rsi         = params["rsi"]
+    price       = params["price"]
+    ma200       = params["ma200"]
+    budget      = params["budget"]
+    n_periods   = params["n_periods"]
+    frequency   = params["frequency"]
+    objective   = params["objective"]
+    strategy_lbl = params["strategy_lbl"]
+
     action_color = "#00d4aa" if action == "BUY" else "#ff4b4b" if action == "SELL" else "#ffa500"
 
-    # ── Today's recommendation card ───────────────────────────────────────────
+    df_full  = pd.DataFrame(sim_rows)
+    has_pred = "Predicted Portfolio ($)" in df_full.columns
+
+    # ── SECTION 1: Recomandarea Principală ───────────────────────────────────
     st.divider()
-    above = params["price"] > params["ma200"]
-    trend_label = "above MA200 — bullish trend" if above else "below MA200 — caution"
+    st.markdown(
+        '<p style="color:#888;font-size:0.78em;font-weight:700;'
+        'text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">'
+        '1. Recomandarea Principală</p>',
+        unsafe_allow_html=True,
+    )
 
     if action == "HOLD":
-        headline = f"Hold for now — market conditions are neutral"
-        sub = (
-            f"RSI is {params['rsi']:.1f} ({_rsi_zone_label(params['rsi'])}) "
-            f"and {ticker_disp} is {trend_label}. "
-            f"Wait for a better entry point."
-        )
+        action_ro = "AȘTEAPTĂ"
+        headline_html = f"Piața este neutră — nu acționa astăzi"
+        units_txt = f"RSI: {rsi:.1f} ({_rsi_zone_label(rsi)}). Revino la următoarea perioadă."
     else:
-        headline = f"Today's move: {verb} **${amount:,.2f}** in {ticker_disp}"
-        units = amount / params["price"] if params["price"] > 0 else 0
-        sub = (
-            f"That buys approximately **{units:.4f} units** at the current price of "
-            f"${params['price']:,.2f}. "
-            f"RSI is {params['rsi']:.1f} ({_rsi_zone_label(params['rsi'])}) "
-            f"and price is {trend_label}."
-        )
+        action_ro = "CUMPĂRĂ" if action == "BUY" else "VINDE"
+        verb_ro   = "Investește" if objective == "Invest" else "Vinde"
+        units     = amount / price if price > 0 else 0
+        headline_html = f"{verb_ro} <strong>${amount:,.2f}</strong> în {ticker_disp} astăzi"
+        units_txt = f"Asta înseamnă ~{units:.4f} unități la prețul curent de ${price:,.2f}."
 
     st.markdown(
         f"""
-        <div style="background:#111;border-radius:14px;padding:24px 28px;margin-bottom:8px;">
-            <div style="color:{action_color};font-size:0.8em;font-weight:700;
-                        text-transform:uppercase;letter-spacing:2px;margin-bottom:8px;">
-                {action} — {params['objective'].upper()}
+        <div style="background:#0d1f0d;border:1.5px solid {action_color};
+                    border-radius:16px;padding:28px 32px;margin-bottom:12px;">
+            <div style="color:{action_color};font-size:2.2em;font-weight:900;
+                        letter-spacing:3px;margin-bottom:12px;">
+                {action_ro}
             </div>
-            <div style="color:#f0f0f0;font-size:1.5em;font-weight:700;margin-bottom:10px;">
-                {headline}
+            <div style="color:#f0f0f0;font-size:1.6em;font-weight:700;margin-bottom:10px;">
+                {headline_html}
             </div>
-            <div style="color:#999;font-size:0.95em;line-height:1.6;">{sub}</div>
+            <div style="color:#aaa;font-size:1em;line-height:1.7;">{units_txt}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # ── Market snapshot + verdict ─────────────────────────────────────────────
-    col_badge, col_gauge, col_risk = st.columns(3)
+    # ── SECTION 2: Radiografia Pieței ────────────────────────────────────────
+    st.divider()
+    st.markdown(
+        '<p style="color:#888;font-size:0.78em;font-weight:700;'
+        'text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">'
+        '2. Radiografia Pieței</p>',
+        unsafe_allow_html=True,
+    )
 
-    with col_badge:
-        st.markdown("#### Decision")
-        confidence = min(1.0, amount / max(params["budget"], 1))
-        display_verdict_badge(
-            decision=action if action in ("BUY", "SELL", "HOLD") else "HOLD",
-            confidence=confidence,
+    col_price, col_ma, col_rsi = st.columns(3)
+
+    with col_price:
+        st.markdown(
+            f"""
+            <div style="background:#111;border-radius:12px;padding:20px 24px;text-align:center;">
+                <div style="color:#888;font-size:0.8em;font-weight:600;
+                            text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">
+                    {ticker_disp} — Preț Curent
+                </div>
+                <div style="color:#f0f0f0;font-size:2.2em;font-weight:800;">
+                    ${price:,.2f}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-    with col_gauge:
-        st.markdown("#### RSI Signal")
-        _render_rsi_gauge(params["rsi"])
-        _rsi_zone_badge(params["rsi"])
+    with col_ma:
+        above = price > ma200
+        trend_color = "#00d4aa" if above else "#ff4b4b"
+        trend_arrow = "↑" if above else "↓"
+        trend_text  = "Trend Crescător" if above else "Trend Descrescător"
+        st.markdown(
+            f"""
+            <div style="background:#111;border-radius:12px;padding:20px 24px;text-align:center;">
+                <div style="color:#888;font-size:0.8em;font-weight:600;
+                            text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">
+                    MA200 (Media Mobilă 200)
+                </div>
+                <div style="color:#f0f0f0;font-size:2.2em;font-weight:800;margin-bottom:10px;">
+                    ${ma200:,.2f}
+                </div>
+                <div style="display:inline-block;background:{trend_color}22;
+                            border:1.5px solid {trend_color};border-radius:20px;
+                            padding:5px 16px;color:{trend_color};
+                            font-weight:700;font-size:0.9em;">
+                    {trend_arrow} {trend_text}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    with col_risk:
-        st.markdown("#### Risk Level")
-        risk_score = (params["rsi"] / 100.0) if params["objective"] == "Invest" else (1.0 - params["rsi"] / 100.0)
-        display_risk_meter(min(1.0, max(0.0, risk_score)))
+    with col_rsi:
+        _render_rsi_gauge_0_100(rsi)
 
-    # ── Plan overview metrics ─────────────────────────────────────────────────
+    # ── SECTION 3: Logica din Spatele Deciziei ────────────────────────────────
     st.divider()
-    df_full = pd.DataFrame(sim_rows)
-    has_pred = "Predicted Portfolio ($)" in df_full.columns
-
-    total_invested  = sum(r["Amount ($)"] for r in sim_rows)
-    final_actual    = sim_rows[-1]["Portfolio Value ($)"] if sim_rows else 0.0
-    final_predicted = (
-        sim_rows[-1].get("Predicted Portfolio ($)", final_actual)
-        if sim_rows else 0.0
-    ) or final_actual
-    gain_predicted  = final_predicted - total_invested
-
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Budget", f"${params['budget']:,.0f}")
-    m2.metric("Time Frame", params["timeframe"])
-    m3.metric("Frequency", params["frequency"])
-    m4.metric(
-        f"Today's {'Investment' if params['objective'] == 'Invest' else 'Sale'}",
-        f"${amount:,.2f}",
+    st.markdown(
+        '<p style="color:#888;font-size:0.78em;font-weight:700;'
+        'text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">'
+        '3. Logica din Spatele Deciziei</p>',
+        unsafe_allow_html=True,
     )
-    m5.metric(
-        "Projected Final Value" + (" (est.)" if has_pred else ""),
-        f"${final_predicted:,.2f}",
-        delta=f"${gain_predicted:+,.2f}",
-        help=(
-            "Estimated using the asset's historical average return per period. "
-            "Not a guarantee — actual results will vary."
-        ) if has_pred else None,
+
+    explanation = _build_strategy_explanation(
+        strategy_lbl=strategy_lbl,
+        rsi=rsi,
+        amount=amount,
+        budget=budget,
+        n_periods=n_periods,
+        objective=objective,
+    )
+    st.markdown(
+        f"""
+        <div style="background:#111;border-radius:12px;padding:20px 28px;
+                    color:#ccc;font-size:1.05em;line-height:1.8;">
+            {explanation}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── SECTION 4: Progresul Planului ────────────────────────────────────────
+    st.divider()
+    st.markdown(
+        '<p style="color:#888;font-size:0.78em;font-weight:700;'
+        'text-transform:uppercase;letter-spacing:2px;margin-bottom:4px;">'
+        '4. Progresul Planului</p>',
+        unsafe_allow_html=True,
+    )
+
+    freq_singular = {"Daily": "Zi", "Weekly": "Săptămână", "Monthly": "Lună"}.get(frequency, frequency)
+    freq_plural   = {"Daily": "Zile", "Weekly": "Săptămâni", "Monthly": "Luni"}.get(frequency, frequency)
+    budget_left   = budget - amount
+    next_date_str = _next_action_date(frequency)
+
+    p1, p2, p3 = st.columns(3)
+    p1.metric(
+        f"Status Plan ({freq_singular} 1 din {n_periods})",
+        f"1 / {n_periods} {freq_plural}",
+    )
+    p2.metric(
+        "Buget Rămas",
+        f"${budget_left:,.2f}",
+        delta=f"-${amount:,.2f}",
+        delta_color="inverse",
+    )
+    p3.metric(
+        "Buget Total",
+        f"${budget:,.2f}",
+    )
+
+    st.markdown(
+        f"""
+        <div style="background:#111;border-radius:10px;padding:14px 22px;
+                    margin-top:8px;color:#aaa;font-size:0.95em;line-height:1.7;">
+            <strong style="color:#f0f0f0;">Sfat:</strong>
+            Revino pe <strong style="color:#f0f0f0;">{next_date_str}</strong>
+            pentru următoarea analiză și recomandare.
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     if not sim_rows:
         st.warning("No simulation results. Try a different asset or time frame.")
         return
 
-    # ── Period-by-period plan ─────────────────────────────────────────────────
+    # ── Expanded details (collapsed by default) ───────────────────────────────
     st.divider()
-    freq_label = params["frequency"].lower()
-    st.subheader(f"{params['frequency']} plan over {params['timeframe']}")
-    if has_pred:
-        st.caption(
-            "**Portfolio Value ($)** uses today's price. "
-            "**Predicted Portfolio ($)** uses the estimated price for that period, "
-            "based on this asset's historical average return. "
-            "RSI is held constant at today's value for all decision periods."
-        )
-    else:
-        st.caption(
-            "RSI is held constant at today's value across all periods. "
-            "Price prediction unavailable for this asset."
-        )
+    with st.expander(f"Planul complet perioadă cu perioadă ({params['frequency']} / {params['timeframe']})", expanded=False):
+        if has_pred:
+            st.caption(
+                "**Portfolio Value ($)** folosește prețul de azi. "
+                "**Predicted Portfolio ($)** folosește prețul estimat per perioadă "
+                "bazat pe randamentul mediu istoric al activului."
+            )
+        else:
+            st.caption("RSI este menținut constant la valoarea de azi pentru toate perioadele.")
 
-    # Build display columns — always show core cols, add prediction cols if available
-    display_cols = ["Period", "Action", "Amount ($)", "Cash Left ($)", "Portfolio Value ($)"]
-    if has_pred:
-        display_cols += ["Predicted Price ($)", "Predicted Portfolio ($)"]
+        display_cols = ["Period", "Action", "Amount ($)", "Cash Left ($)", "Portfolio Value ($)"]
+        if has_pred:
+            display_cols += ["Predicted Price ($)", "Predicted Portfolio ($)"]
+        df_display = df_full[display_cols].copy()
 
-    df_display = df_full[display_cols].copy()
+        def _style_action(val: str) -> str:
+            if val == "BUY":
+                return "color:#00d4aa;font-weight:bold;"
+            if val == "SELL":
+                return "color:#ff4b4b;font-weight:bold;"
+            return "color:#ffa500;"
 
-    def _style_action(val: str) -> str:
-        if val == "BUY":
-            return "color:#00d4aa;font-weight:bold;"
-        if val == "SELL":
-            return "color:#ff4b4b;font-weight:bold;"
-        return "color:#ffa500;"
+        styled = df_display.style.map(_style_action, subset=["Action"])
+        st.dataframe(styled, use_container_width=True, hide_index=True)
 
-    styled = df_display.style.map(_style_action, subset=["Action"])
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.subheader("Valoarea portofoliului în timp")
+        if has_pred:
+            _render_portfolio_chart_with_prediction(sim_rows)
+        else:
+            _render_portfolio_chart(sim_rows)
 
-    # ── Portfolio chart (add predicted line if available) ─────────────────────
-    st.divider()
-    st.subheader("Portfolio value over time")
-    if has_pred:
-        _render_portfolio_chart_with_prediction(sim_rows)
-    else:
-        _render_portfolio_chart(sim_rows)
-
-    # ── CLIPS log (collapsed — for transparency) ──────────────────────────────
-    with st.expander("How was this calculated? (Rules engine log)", expanded=False):
-        st.caption("Raw output from the CLIPS expert system for the first period.")
+    with st.expander("Cum a fost calculat? (Log Motor Reguli)", expanded=False):
+        st.caption("Output brut din sistemul expert CLIPS pentru prima perioadă.")
         if first["clips_log"].strip():
             st.code(first["clips_log"], language=None)
         else:
-            st.info("No printout from the rules engine.")
+            st.info("Niciun printout din motorul de reguli.")
 
     # ── CSV export ────────────────────────────────────────────────────────────
     csv_bytes = df_full.to_csv(index=False).encode("utf-8")
     st.download_button(
-        "Download plan (CSV)",
+        "Descarcă planul (CSV)",
         data=csv_bytes,
         file_name=(
             f"tradingpal_{params['ticker']}_{params['objective']}_"
