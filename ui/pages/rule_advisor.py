@@ -227,7 +227,8 @@ def _run_clips_period(
         "new_avg_price": avg_price,
         "new_target_sum": target_sum,
         "new_periods": max(0, periods - 1),
-        "rule_fired": "Nicio regulă aplicabilă",
+        "rule_fired": "fallback-nicio-actiune",
+        "rules_triggered": [],
         "error": None,
     }
 
@@ -307,19 +308,16 @@ def _run_clips_period(
             action = "HOLD"
             amount = 0.0
 
-        # Infer which rule fired from the CLIPS printout
+        # Collect all triggered rules from the CLIPS printout
         log = result["clips_log"]
-        rule_fired = "Nicio regulă aplicabilă (HOLD)"
-        if "EXEC:" in log:
-            for line in log.splitlines():
-                if "EXEC:" in line:
-                    rule_fired = line.strip()
-                    break
-        elif "ALERTĂ:" in log:
-            for line in log.splitlines():
-                if "ALERTĂ:" in line:
-                    rule_fired = line.strip()
-                    break
+        import re as _re
+        rules_triggered = []
+        for line in log.splitlines():
+            m = _re.search(r'\[([\w\-]+)\]', line)
+            if m and any(prefix in line for prefix in ("EXEC ", "ALERTĂ ", "HOLD ")):
+                rules_triggered.append(m.group(1))
+
+        rule_fired = rules_triggered[0] if rules_triggered else "fallback-nicio-actiune"
 
         result.update({
             "action": action,
@@ -330,6 +328,7 @@ def _run_clips_period(
             "new_target_sum": new_target,
             "new_periods": new_periods,
             "rule_fired": rule_fired,
+            "rules_triggered": rules_triggered,
         })
 
     except ImportError:
@@ -716,9 +715,29 @@ def render() -> None:
             strategy_lbl  = st.selectbox("Strategy", list(_STRATEGY_MAP.keys()))
 
         with col2:
-            budget        = st.number_input("My Budget ($)", min_value=100.0,
-                                            value=10_000.0, step=100.0)
+            budget        = st.number_input(
+                "My Budget / Target ($)",
+                min_value=100.0,
+                value=10_000.0,
+                step=100.0,
+                help="Invest: money to invest. Cash out: total amount you want to extract.",
+            )
             timeframe_lbl = st.selectbox("Over how long?", _TIMEFRAMES, index=3)
+            qty_held      = st.number_input(
+                "Units I currently hold (Cash out only)",
+                min_value=0.0,
+                value=0.0,
+                step=0.001,
+                format="%.6f",
+                help="How many units of this asset you currently own. Required for Cash out.",
+            )
+            avg_cost      = st.number_input(
+                "My avg. purchase price ($, Cash out only)",
+                min_value=0.0,
+                value=0.0,
+                step=1.0,
+                help="Your average cost per unit. Used to check if selling is profitable.",
+            )
 
         with col3:
             frequency = st.selectbox(
@@ -782,21 +801,29 @@ def render() -> None:
                 "This may take a few seconds…"
             )
 
+        if objective == "Cash out" and qty_held <= 0.0:
+            st.warning(
+                "For **Cash out**, please enter how many units you currently hold "
+                "(\"Units I currently hold\"). Without holdings, no sell rule can trigger."
+            )
+            return
+
         with st.spinner("Analysing market conditions…"):
             predicted_prices = _forecast_prices(ticker_choice, n_periods, frequency)
 
+            is_cashout = (objective == "Cash out")
             first = _run_clips_period(
                 objective=objective,
                 strategy_clips=strategy_clips,
                 target_sum=budget,
                 periods=n_periods,
-                budget=budget,
+                budget=0.0 if is_cashout else budget,
                 ticker=clips_ticker,
                 rsi=current_rsi,
                 price=current_price,
                 ma200=ma200,
-                qty=0.0,
-                avg_price=0.0,
+                qty=qty_held if is_cashout else 0.0,
+                avg_price=avg_cost if is_cashout else 0.0,
             )
 
             if first["error"]:
@@ -808,13 +835,13 @@ def render() -> None:
                 strategy_clips=strategy_clips,
                 target_sum=budget,
                 n_periods=n_periods,
-                budget=budget,
+                budget=0.0 if is_cashout else budget,
                 ticker=clips_ticker,
                 rsi=current_rsi,
                 price=current_price,
                 ma200=ma200,
-                qty=0.0,
-                avg_price=0.0,
+                qty=qty_held if is_cashout else 0.0,
+                avg_price=avg_cost if is_cashout else 0.0,
                 frequency=frequency,
                 predicted_prices=predicted_prices,
             )
@@ -1060,6 +1087,13 @@ def render() -> None:
             _render_portfolio_chart(sim_rows)
 
     with st.expander("Cum a fost calculat? (Log Motor Reguli)", expanded=False):
+        triggered = first.get("rules_triggered", [])
+        if triggered:
+            st.markdown("**Reguli declanșate:**")
+            for r in triggered:
+                st.markdown(f"- `{r}`")
+        else:
+            st.info("Nicio regulă declanșată (fallback HOLD).")
         st.caption("Output brut din sistemul expert CLIPS pentru prima perioadă.")
         if first["clips_log"].strip():
             st.code(first["clips_log"], language=None)

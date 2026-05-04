@@ -68,7 +68,7 @@
     (stare-sistem (faza procesare) (obiectiv "Invest"))
     (portofoliu (buget-disponibil ?b&:(<= ?b 0.0)))
     =>
-    (printout t "ALERTĂ: Depozitare fonduri. Buget insuficient pentru Invest." crlf)
+    (printout t "ALERTĂ [Depozitare-fonduri]: Buget insuficient pentru Invest." crlf)
 )
 
 (defrule Cumparare-DCA-Fix
@@ -84,7 +84,7 @@
     (bind ?cant-totala (+ ?c ?cant-noua))
     (bind ?pret-mediu-nou (if (> ?cant-totala 0) then (/ ?valoare-noua ?cant-totala) else 0))
 
-    (printout t "EXEC: DCA Fix. Investim " ?cost "$ în " ?nume "." crlf)
+    (printout t "EXEC [Cumparare-DCA-Fix]: DCA Fix. Investim " ?cost "$ în " ?nume "." crlf)
 
     (modify ?portof (buget-disponibil (- ?b ?cost)))
     (modify ?det (cantitate ?cant-totala) (pret-mediu ?pret-mediu-nou))
@@ -105,7 +105,7 @@
     (bind ?cant-totala (+ ?c ?cant-noua))
     (bind ?pret-mediu-nou (if (> ?cant-totala 0) then (/ ?valoare-noua ?cant-totala) else 0))
 
-    (printout t "EXEC: Hibrid (RSI " ?rsi "). Piața favorabilă! Investim AGRESIV " ?cost "$ în " ?nume "." crlf)
+    (printout t "EXEC [Cumparare-Hibrid-Ajustare-Negativa]: Hibrid (RSI " ?rsi "). Piața favorabilă! Investim AGRESIV " ?cost "$ în " ?nume "." crlf)
 
     (modify ?portof (buget-disponibil (- ?b ?cost)))
     (modify ?det (cantitate ?cant-totala) (pret-mediu ?pret-mediu-nou))
@@ -125,7 +125,7 @@
     (bind ?cant-totala (+ ?c ?cant-noua))
     (bind ?pret-mediu-nou (if (> ?cant-totala 0) then (/ ?valoare-noua ?cant-totala) else 0))
 
-    (printout t "EXEC: Hibrid (RSI " ?rsi "). Piața neutră. Investim NORMAL " ?cost "$ în " ?nume "." crlf)
+    (printout t "EXEC [Cumparare-Hibrid-De-Baza]: Hibrid (RSI " ?rsi "). Piața neutră. Investim NORMAL " ?cost "$ în " ?nume "." crlf)
 
     (modify ?portof (buget-disponibil (- ?b ?cost)))
     (modify ?det (cantitate ?cant-totala) (pret-mediu ?pret-mediu-nou))
@@ -146,17 +146,59 @@
     (bind ?cant-totala (+ ?c ?cant-noua))
     (bind ?pret-mediu-nou (if (> ?cant-totala 0) then (/ ?valoare-noua ?cant-totala) else 0))
 
-    (printout t "EXEC: Hibrid (RSI " ?rsi "). Piața scumpă! Investim DEFENSIV doar " ?cost "$ în " ?nume "." crlf)
+    (printout t "EXEC [Cumparare-Hibrid-Ajustare-Pozitiva]: Hibrid (RSI " ?rsi "). Piața scumpă! Investim DEFENSIV doar " ?cost "$ în " ?nume "." crlf)
 
     (modify ?portof (buget-disponibil (- ?b ?cost)))
     (modify ?det (cantitate ?cant-totala) (pret-mediu ?pret-mediu-nou))
     (modify ?stare (suma-tinta (- ?tinta ?cost)) (perioade-ramase (- ?perioade 1)) (faza finalizare))
 )
 
-(defrule Cumparare-DCA
+(defrule Cumparare-RSI-ExtremOversold
     ?stare <- (stare-sistem (faza procesare) (obiectiv "Invest") (strategie "RSI") (suma-tinta ?tinta) (perioade-ramase ?perioade&:(> ?perioade 0)))
     ?portof <- (portofoliu (buget-disponibil ?b&:(> ?b 0.0)))
-    (activ-piata (nume ?nume) (pret ?p) (ma200 ?ma&:(> ?p ?ma)))
+    (activ-piata (nume ?nume) (rsi ?rsi&:(< ?rsi 30)) (pret ?p) (ma200 ?ma&:(> ?p ?ma)))
+    ?det <- (detinere-activ (nume-activ ?nume) (cantitate ?c) (pret-mediu ?pm))
+    =>
+    (bind ?baza (/ ?tinta ?perioade))
+    (bind ?cost (min (* ?baza 3.0) ?b))
+    (bind ?cant-noua (/ ?cost ?p))
+    (bind ?valoare-veche (* ?c ?pm))
+    (bind ?valoare-noua (+ ?valoare-veche ?cost))
+    (bind ?cant-totala (+ ?c ?cant-noua))
+    (bind ?pret-mediu-nou (if (> ?cant-totala 0) then (/ ?valoare-noua ?cant-totala) else 0))
+
+    (printout t "EXEC [Cumparare-RSI-ExtremOversold]: RSI " ?rsi " < 30. Piata EXTREM de ieftina! Cumparam MAXIM " ?cost "$." crlf)
+
+    (modify ?portof (buget-disponibil (- ?b ?cost)))
+    (modify ?det (cantitate ?cant-totala) (pret-mediu ?pret-mediu-nou))
+    (modify ?stare (suma-tinta (- ?tinta ?cost)) (perioade-ramase (- ?perioade 1)) (faza finalizare))
+)
+
+(defrule Cumparare-RSI-Oversold
+    ?stare <- (stare-sistem (faza procesare) (obiectiv "Invest") (strategie "RSI") (suma-tinta ?tinta) (perioade-ramase ?perioade&:(> ?perioade 0)))
+    ?portof <- (portofoliu (buget-disponibil ?b&:(> ?b 0.0)))
+    (activ-piata (nume ?nume) (rsi ?rsi&:(>= ?rsi 30)&:(< ?rsi 45)) (pret ?p) (ma200 ?ma&:(> ?p ?ma)))
+    ?det <- (detinere-activ (nume-activ ?nume) (cantitate ?c) (pret-mediu ?pm))
+    =>
+    (bind ?baza (/ ?tinta ?perioade))
+    (bind ?cost (min (* ?baza 2.0) ?b))
+    (bind ?cant-noua (/ ?cost ?p))
+    (bind ?valoare-veche (* ?c ?pm))
+    (bind ?valoare-noua (+ ?valoare-veche ?cost))
+    (bind ?cant-totala (+ ?c ?cant-noua))
+    (bind ?pret-mediu-nou (if (> ?cant-totala 0) then (/ ?valoare-noua ?cant-totala) else 0))
+
+    (printout t "EXEC [Cumparare-RSI-Oversold]: RSI " ?rsi " (30-45). Piata ieftina! Cumparam AGRESIV " ?cost "$." crlf)
+
+    (modify ?portof (buget-disponibil (- ?b ?cost)))
+    (modify ?det (cantitate ?cant-totala) (pret-mediu ?pret-mediu-nou))
+    (modify ?stare (suma-tinta (- ?tinta ?cost)) (perioade-ramase (- ?perioade 1)) (faza finalizare))
+)
+
+(defrule Cumparare-RSI-Neutru
+    ?stare <- (stare-sistem (faza procesare) (obiectiv "Invest") (strategie "RSI") (suma-tinta ?tinta) (perioade-ramase ?perioade&:(> ?perioade 0)))
+    ?portof <- (portofoliu (buget-disponibil ?b&:(> ?b 0.0)))
+    (activ-piata (nume ?nume) (rsi ?rsi&:(>= ?rsi 45)&:(< ?rsi 60)) (pret ?p) (ma200 ?ma&:(> ?p ?ma)))
     ?det <- (detinere-activ (nume-activ ?nume) (cantitate ?c) (pret-mediu ?pm))
     =>
     (bind ?cost (min (/ ?tinta ?perioade) ?b))
@@ -166,7 +208,49 @@
     (bind ?cant-totala (+ ?c ?cant-noua))
     (bind ?pret-mediu-nou (if (> ?cant-totala 0) then (/ ?valoare-noua ?cant-totala) else 0))
 
-    (printout t "EXEC: Cumpărare DCA condusă de RSI. Cost: " ?cost "$." crlf)
+    (printout t "EXEC [Cumparare-RSI-Neutru]: RSI " ?rsi " (45-60). Piata neutra. Cumparam NORMAL " ?cost "$." crlf)
+
+    (modify ?portof (buget-disponibil (- ?b ?cost)))
+    (modify ?det (cantitate ?cant-totala) (pret-mediu ?pret-mediu-nou))
+    (modify ?stare (suma-tinta (- ?tinta ?cost)) (perioade-ramase (- ?perioade 1)) (faza finalizare))
+)
+
+(defrule Cumparare-RSI-Overbought
+    ?stare <- (stare-sistem (faza procesare) (obiectiv "Invest") (strategie "RSI") (suma-tinta ?tinta) (perioade-ramase ?perioade&:(> ?perioade 0)))
+    ?portof <- (portofoliu (buget-disponibil ?b&:(> ?b 0.0)))
+    (activ-piata (nume ?nume) (rsi ?rsi&:(>= ?rsi 60)&:(< ?rsi 75)) (pret ?p) (ma200 ?ma&:(> ?p ?ma)))
+    ?det <- (detinere-activ (nume-activ ?nume) (cantitate ?c) (pret-mediu ?pm))
+    =>
+    (bind ?baza (/ ?tinta ?perioade))
+    (bind ?cost (min (* ?baza 0.3) ?b))
+    (bind ?cant-noua (/ ?cost ?p))
+    (bind ?valoare-veche (* ?c ?pm))
+    (bind ?valoare-noua (+ ?valoare-veche ?cost))
+    (bind ?cant-totala (+ ?c ?cant-noua))
+    (bind ?pret-mediu-nou (if (> ?cant-totala 0) then (/ ?valoare-noua ?cant-totala) else 0))
+
+    (printout t "EXEC [Cumparare-RSI-Overbought]: RSI " ?rsi " (60-75). Piata scumpa. Cumparam DEFENSIV doar " ?cost "$." crlf)
+
+    (modify ?portof (buget-disponibil (- ?b ?cost)))
+    (modify ?det (cantitate ?cant-totala) (pret-mediu ?pret-mediu-nou))
+    (modify ?stare (suma-tinta (- ?tinta ?cost)) (perioade-ramase (- ?perioade 1)) (faza finalizare))
+)
+
+(defrule Cumparare-RSI-ExtremOverbought
+    ?stare <- (stare-sistem (faza procesare) (obiectiv "Invest") (strategie "RSI") (suma-tinta ?tinta) (perioade-ramase ?perioade&:(> ?perioade 0)))
+    ?portof <- (portofoliu (buget-disponibil ?b&:(> ?b 0.0)))
+    (activ-piata (nume ?nume) (rsi ?rsi&:(>= ?rsi 75)) (pret ?p) (ma200 ?ma&:(> ?p ?ma)))
+    ?det <- (detinere-activ (nume-activ ?nume) (cantitate ?c) (pret-mediu ?pm))
+    =>
+    (bind ?baza (/ ?tinta ?perioade))
+    (bind ?cost (min (* ?baza 0.1) ?b))
+    (bind ?cant-noua (/ ?cost ?p))
+    (bind ?valoare-veche (* ?c ?pm))
+    (bind ?valoare-noua (+ ?valoare-veche ?cost))
+    (bind ?cant-totala (+ ?c ?cant-noua))
+    (bind ?pret-mediu-nou (if (> ?cant-totala 0) then (/ ?valoare-noua ?cant-totala) else 0))
+
+    (printout t "EXEC [Cumparare-RSI-ExtremOverbought]: RSI " ?rsi " >= 75. Piata EXTREM de scumpa! Cumparam MINIMAL " ?cost "$." crlf)
 
     (modify ?portof (buget-disponibil (- ?b ?cost)))
     (modify ?det (cantitate ?cant-totala) (pret-mediu ?pret-mediu-nou))
@@ -181,7 +265,7 @@
     (stare-sistem (faza procesare) (obiectiv "Cash out"))
     (detinere-activ (cantitate ?c&:(<= ?c 0.0)))
     =>
-    (printout t "ALERTĂ: Lipsa-Active-Pentru-Vânzare (Zero fonduri de vândut)." crlf)
+    (printout t "ALERTĂ [Lipsa-Active-Pentru-Vanzare]: Zero fonduri de vândut." crlf)
 )
 
 (defrule Vanzare-DCA
@@ -194,7 +278,7 @@
     (bind ?venit (min (/ ?tinta ?perioade) ?valoare-totala-activ))
     (bind ?cant-vanduta (/ ?venit ?p))
 
-    (printout t "EXEC: Vânzare DCA. Extragem " ?venit "$." crlf)
+    (printout t "EXEC [Vanzare-DCA]: Vânzare DCA. Extragem " ?venit "$." crlf)
 
     (modify ?portof (buget-disponibil (+ ?b ?venit)))
     (modify ?det (cantitate (- ?c ?cant-vanduta)))
@@ -212,7 +296,7 @@
     (bind ?venit (min (* ?baza 0.2) ?valoare-totala-activ))
     (bind ?cant-vanduta (/ ?venit ?p))
 
-    (printout t "EXEC: Vânzare Hibrid (RSI " ?rsi " < 40). Preț prost. Extragem doar " ?venit "$." crlf)
+    (printout t "EXEC [Vanzare-Hibrid-Ajustare-Negativa]: Vânzare Hibrid (RSI " ?rsi " < 40). Preț prost. Extragem doar " ?venit "$." crlf)
 
     (modify ?portof (buget-disponibil (+ ?b ?venit)))
     (modify ?det (cantitate (- ?c ?cant-vanduta)))
@@ -229,7 +313,7 @@
     (bind ?venit (min (/ ?tinta ?perioade) ?valoare-totala-activ))
     (bind ?cant-vanduta (/ ?venit ?p))
 
-    (printout t "EXEC: Vânzare Hibrid (RSI " ?rsi "). Neutru. Extragem targetul de " ?venit "$." crlf)
+    (printout t "EXEC [Vanzare-Hibrid-De-Baza]: Vânzare Hibrid (RSI " ?rsi "). Neutru. Extragem targetul de " ?venit "$." crlf)
 
     (modify ?portof (buget-disponibil (+ ?b ?venit)))
     (modify ?det (cantitate (- ?c ?cant-vanduta)))
@@ -247,7 +331,7 @@
     (bind ?venit (min (* ?baza 1.5) ?valoare-totala-activ))
     (bind ?cant-vanduta (/ ?venit ?p))
 
-    (printout t "EXEC: Vânzare Hibrid (RSI " ?rsi "). Trend ascendent. Accelerăm la " ?venit "$ extrași." crlf)
+    (printout t "EXEC [Vanzare-Hibrid-Ajustare-Pozitiva]: Vânzare Hibrid (RSI " ?rsi "). Trend ascendent. Accelerăm la " ?venit "$ extrași." crlf)
 
     (modify ?portof (buget-disponibil (+ ?b ?venit)))
     (modify ?det (cantitate (- ?c ?cant-vanduta)))
@@ -265,7 +349,25 @@
     (bind ?venit (min (* ?baza 2.0) ?valoare-totala-activ))
     (bind ?cant-vanduta (/ ?venit ?p))
 
-    (printout t "EXEC: Vânzare RSI Oportunitate (RSI " ?rsi ")! Cash out MASIV pentru " ?venit "$." crlf)
+    (printout t "EXEC [Vanzare-RSI-Oportunitate]: Vânzare RSI Oportunitate (RSI " ?rsi ")! Cash out MASIV pentru " ?venit "$." crlf)
+
+    (modify ?portof (buget-disponibil (+ ?b ?venit)))
+    (modify ?det (cantitate (- ?c ?cant-vanduta)))
+    (modify ?stare (suma-tinta (- ?tinta ?venit)) (perioade-ramase (- ?perioade 1)) (faza finalizare))
+)
+
+(defrule Vanzare-Hibrid-RSI-Maxim
+    ?stare <- (stare-sistem (faza procesare) (obiectiv "Cash out") (strategie "hibrid") (suma-tinta ?tinta) (perioade-ramase ?perioade&:(> ?perioade 0)))
+    ?portof <- (portofoliu (buget-disponibil ?b))
+    (activ-piata (nume ?nume) (rsi ?rsi&:(>= ?rsi 75)) (pret ?p))
+    ?det <- (detinere-activ (nume-activ ?nume) (cantitate ?c&:(> ?c 0.0)) (pret-mediu ?pm&:(< ?pm ?p)))
+    =>
+    (bind ?valoare-totala-activ (* ?c ?p))
+    (bind ?baza (/ ?tinta ?perioade))
+    (bind ?venit (min (* ?baza 2.0) ?valoare-totala-activ))
+    (bind ?cant-vanduta (/ ?venit ?p))
+
+    (printout t "EXEC [Vanzare-Hibrid-RSI-Maxim]: Vânzare Hibrid (RSI " ?rsi " >= 75). Piata SUPRACUMPARATA! Cash out AGRESIV " ?venit "$." crlf)
 
     (modify ?portof (buget-disponibil (+ ?b ?venit)))
     (modify ?det (cantitate (- ?c ?cant-vanduta)))
@@ -275,7 +377,7 @@
 (defrule fallback-nicio-actiune
     ?stare <- (stare-sistem (faza procesare))
     =>
-    (printout t "Nicio regula aplicabila. Trecem la finalizare." crlf)
+    (printout t "HOLD [fallback-nicio-actiune]: Nicio regula aplicabila." crlf)
     (modify ?stare (faza finalizare))
 )
 
