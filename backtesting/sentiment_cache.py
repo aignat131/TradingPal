@@ -21,7 +21,11 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PATH = os.path.join("data_cache", "finsen_daily_sentiment.parquet")
+_DEFAULT_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data_cache",
+    "finsen_daily_sentiment.parquet",
+)
 
 
 class SentimentCache:

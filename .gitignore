@@ -36,6 +36,7 @@ htmlcov/
 # TradingPal-AI
 data_cache/*
 !data_cache/.gitkeep
+!data_cache/finsen_daily_sentiment.parquet
 data/finsen_data/
 
 # Streamlit
