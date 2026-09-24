@@ -1,0 +1,18 @@
+{
+  "settings": {
+    "send_time": "08:00",
+    "timezone": "Europe/Bucharest"
+  },
+  "assets": [
+    {"symbol": "NVDA", "name": "NVIDIA", "type": "stock", "focus": "core", "note": ""},
+    {"symbol": "TSLA", "name": "Tesla", "type": "stock", "focus": "core", "note": ""},
+    {"symbol": "SPY", "name": "S&P 500 (SPY)", "type": "etf", "focus": "core", "note": ""},
+    {"symbol": "GOOGL", "name": "Alphabet (Google)", "type": "stock", "focus": "core", "note": ""},
+    {"symbol": "MSFT", "name": "Microsoft", "type": "stock", "focus": "core", "note": ""},
+    {"symbol": "META", "name": "Meta Platforms", "type": "stock", "focus": "core", "note": ""},
+    {"symbol": "MSTR", "name": "Strategy (MicroStrategy)", "type": "stock", "focus": "core", "note": ""},
+    {"symbol": "BTC-USD", "name": "Bitcoin", "type": "crypto", "focus": "core", "note": ""},
+    {"symbol": "ETH-USD", "name": "Ethereum", "type": "crypto", "focus": "core", "note": ""},
+    {"symbol": "XRP-USD", "name": "XRP", "type": "crypto", "focus": "core", "note": ""}
+  ]
+}

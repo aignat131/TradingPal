@@ -580,6 +580,14 @@ class ManagerAgent:
             {"ticker": "QQQ", "reason": "Top tech companies ETF — strong growth potential"},
         ]
 
+    def ask_json(self, prompt: str) -> Optional[Dict]:
+        """
+        Send a free-form prompt that asks for a JSON object; return the parsed
+        dict (Gemini → Groq fallback) or None when no AI is available.
+        """
+        result = self._call_ai(prompt)
+        return result if isinstance(result, dict) else None
+
     def synthesize_signals(
         self,
         technical: Dict,

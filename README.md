@@ -151,6 +151,54 @@ TradingPal/
 
 ---
 
+## Telegram Daily Brief (bot/)
+
+A headless bot, run by GitHub Actions **once each morning**, that:
+
+- sends a **morning recap** (default 08:00 Europe/Bucharest): benchmark moves, your watchlist
+  with price / 1-day / 5-day change / RSI, top crypto & stock headlines (real RSS + Yahoo
+  Finance news only — never simulated), and 1-2 **buy** and **sell/avoid** ideas from
+  RSI/SMA + headline sentiment, written up by Gemini (Groq fallback, rule-based if no AI);
+- lets you **edit the watchlist by chatting** with it — "add AMD and Solana",
+  "stop tracking Tesla", "note on BTC: long-term hold". The AI turns your message into
+  actions; tickers are checked against Yahoo Finance before they're added.
+  Shortcuts: `/list`, `/add X`, `/remove X`, `/help`.
+
+The watchlist lives in [`bot/data/watchlist.json`](bot/data/watchlist.json) (you can also edit
+it on GitHub directly) and the workflow commits changes back to the repo. Assets with
+`"focus": "watch"` only show up on strong signals or big (≥5%) moves.
+
+**Timing:** the bot only wakes up in the morning. It first reads the messages you sent since
+the previous morning, applies the changes (and replies), then sends the recap — so a change
+you send during the day shows up in the next morning's recap. Want it sooner? Run it by hand:
+**GitHub → Actions → Telegram bot → Run workflow** (works from the GitHub mobile app too).
+Telegram only keeps unread messages for 24 hours, so a message sent right after one morning's
+recap can occasionally expire before the next morning's run; if a change didn't apply, resend it.
+
+The cron fires at 05:00 and 06:00 UTC so it hits 08:00 Romania time in both summer and
+winter; a cheap gate step makes sure only one of them actually runs the bot. To change the
+time, edit `send_time` in `watchlist.json` **and** the cron in
+`.github/workflows/telegram-bot.yml`.
+
+### Setup
+
+1. In Telegram, talk to **@BotFather** → `/newbot` → copy the **bot token**.
+2. Send any message to your new bot, then open
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser and copy `"chat":{"id": ...}`.
+3. In GitHub: **Settings → Secrets and variables → Actions → New repository secret** and add
+   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GEMINI_API_KEY` (optional: `GROQ_API_KEY`).
+4. Merge to the default branch (scheduled workflows only run from there), then test it via
+   **Actions → Telegram bot → Run workflow** (*Send the brief now* is ticked by default).
+
+Only messages from `TELEGRAM_CHAT_ID` are obeyed. Local test run (prints instead of sending):
+
+```bash
+pip install -r bot/requirements.txt
+python -m bot.main --dry-run --force-brief
+```
+
+---
+
 ## Running Tests
 
 ```bash
