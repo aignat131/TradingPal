@@ -24,6 +24,10 @@ GEMINI_API_KEY: str = _secret("GEMINI_API_KEY") or _secret("ANTHROPIC_API_KEY")
 GROQ_API_KEY: str = _secret("GROQ_API_KEY")
 NEWS_API_KEY: str = _secret("NEWS_API_KEY")
 
+# Telegram bot (bot/ package, run by GitHub Actions)
+TELEGRAM_BOT_TOKEN: str = _secret("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID: str = _secret("TELEGRAM_CHAT_ID")
+
 # ---------------------------------------------------------------------------
 # Data paths
 # ---------------------------------------------------------------------------
