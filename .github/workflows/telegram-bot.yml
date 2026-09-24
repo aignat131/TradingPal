@@ -1,17 +1,22 @@
 name: Telegram bot
 
-# Every 30 minutes: handle new Telegram messages (watchlist changes), and send
-# the daily brief once it's due (time + timezone live in bot/data/watchlist.json).
+# Once a day: read the Telegram messages received since the last run (watchlist
+# changes), then send the morning brief. Time + timezone live in
+# bot/data/watchlist.json (default 08:00 Europe/Bucharest).
+#
+# Cron is UTC-only, so it fires at 05:00 and 06:00 UTC to hit 08:00 Bucharest in
+# both summer (UTC+3) and winter (UTC+2); the "gate" step lets only the right
+# one do any work. Extra runs happen only via "Run workflow" (manual).
 # Scheduled workflows only run from the default branch.
 on:
   schedule:
-    - cron: "5,35 * * * *"
+    - cron: "0 5,6 * * *"
   workflow_dispatch:
     inputs:
       force_brief:
-        description: "Send the daily brief now"
+        description: "Send the brief now (untick to only apply watchlist changes)"
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: write
@@ -27,16 +32,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Gate — is the morning brief due?
+        id: gate
+        if: github.event_name == 'schedule'
+        run: python3 -m bot.schedule
+
       - uses: actions/setup-python@v5
+        if: github.event_name != 'schedule' || steps.gate.outputs.due == 'true'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: bot/requirements.txt
 
       - name: Install dependencies
+        if: github.event_name != 'schedule' || steps.gate.outputs.due == 'true'
         run: pip install -r bot/requirements.txt
 
       - name: Run bot
+        if: github.event_name != 'schedule' || steps.gate.outputs.due == 'true'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -46,7 +59,7 @@ jobs:
         run: python -m bot.main ${{ inputs.force_brief && '--force-brief' || '' }}
 
       - name: Save watchlist & state
-        if: always()
+        if: always() && (github.event_name != 'schedule' || steps.gate.outputs.due == 'true')
         run: |
           if git diff --quiet -- bot/data; then
             echo "No changes to bot/data."

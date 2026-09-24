@@ -1,38 +1,27 @@
 """
-TradingPal Telegram bot — one run = handle new messages, then send the daily
-brief if it's due. Designed to be invoked every ~30 minutes by GitHub Actions.
+TradingPal Telegram bot — one run = read the messages received since the last
+run (watchlist changes), then send the daily brief. GitHub Actions runs it once
+each morning; extra runs only happen when started manually.
 
 Usage:
-    python -m bot.main                 # normal run
+    python -m bot.main                 # scheduled run: brief only if it's due
+    python -m bot.main --force-brief   # manual run: send the brief now
     python -m bot.main --dry-run       # print messages instead of sending, don't save
-    python -m bot.main --force-brief   # send the brief now regardless of schedule
 """
 import argparse
 import logging
 import sys
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import config
+from bot.schedule import brief_is_due, local_now
 from bot.storage import BotState, WatchlistStore
 from bot.telegram import TelegramClient
 
 logger = logging.getLogger("bot")
 
-# Give up on a missed morning brief after this long (e.g. Actions outage).
-BRIEF_WINDOW = timedelta(hours=4)
 
-
-def brief_is_due(now_local: datetime, send_time: str, last_brief_date: str) -> bool:
-    hour, minute = (int(x) for x in send_time.split(":"))
-    scheduled = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    today = now_local.strftime("%Y-%m-%d")
-    return last_brief_date != today and scheduled <= now_local < scheduled + BRIEF_WINDOW
-
-
-def process_messages(tg: TelegramClient, state: BotState, processor) -> bool:
-    """Handle pending messages from the owner. Returns True if a brief was requested."""
-    wants_brief = False
+def process_messages(tg: TelegramClient, state: BotState, processor) -> None:
+    """Handle pending messages from the owner (Telegram keeps them for 24h)."""
     updates = tg.get_updates(state.telegram_offset)
     for update in updates:
         state.telegram_offset = max(state.telegram_offset, update["update_id"] + 1)
@@ -45,10 +34,7 @@ def process_messages(tg: TelegramClient, state: BotState, processor) -> bool:
         if not text:
             continue
         logger.info("Handling message: %r", text[:100])
-        reply, brief = processor.handle(text)
-        wants_brief = wants_brief or brief
-        tg.send_message(reply)
-    return wants_brief
+        tg.send_message(processor.handle(text))
 
 
 def _load_manager():
@@ -76,19 +62,18 @@ def run(dry_run: bool = False, force_brief: bool = False) -> int:
     exit_code = 0
 
     try:
-        wants_brief = False
         if token and chat_id:
             from bot.commands import CommandProcessor
 
             try:
-                wants_brief = process_messages(tg, state, CommandProcessor(store, manager))
+                process_messages(tg, state, CommandProcessor(store, manager))
             except Exception:
                 logger.exception("Processing Telegram messages failed.")
                 exit_code = 1
 
-        now_local = datetime.now(ZoneInfo(store.settings["timezone"]))
+        now_local = local_now(store)
         scheduled = brief_is_due(now_local, store.settings["send_time"], state.last_brief_date)
-        if scheduled or force_brief or wants_brief:
+        if scheduled or force_brief:
             from bot.brief import build_brief
 
             try:

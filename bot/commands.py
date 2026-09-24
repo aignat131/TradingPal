@@ -21,10 +21,10 @@ HELP_TEXT = (
     "• <i>stop tracking Tesla</i>\n"
     "• <i>only mention XRP when there's a strong signal</i>\n"
     "• <i>note on BTC: long-term hold</i>\n"
-    "• <i>send the recap at 7:30</i>\n"
-    "• <i>show my list</i> / <i>send me the recap now</i>\n\n"
-    "Shortcuts: /list, /add SYMBOL, /remove SYMBOL, /brief, /help\n"
-    "<i>Messages are processed every ~30 minutes, not instantly.</i>"
+    "• <i>show my list</i>\n\n"
+    "Shortcuts: /list, /add SYMBOL, /remove SYMBOL, /help\n"
+    "<i>I read your messages once a day, just before the morning recap, so changes "
+    "apply to the next recap. Need it sooner? GitHub → Actions → Telegram bot → Run workflow.</i>"
 )
 
 _COMMAND_PROMPT = """\
@@ -42,9 +42,7 @@ Allowed actions (JSON objects):
 - {{"type": "remove", "symbol": "TSLA"}}
 - {{"type": "set_focus", "symbol": "XRP-USD", "focus": "core"|"watch"}}   ("watch" = mention only on strong signals)
 - {{"type": "set_note", "symbol": "BTC-USD", "note": "..."}}
-- {{"type": "set_send_time", "time": "HH:MM"}}
 - {{"type": "list"}}
-- {{"type": "send_brief"}}
 - {{"type": "help"}}
 
 If the message is unclear or unrelated, return no actions and put a short
@@ -68,16 +66,12 @@ def parse_slash_command(text: str) -> Optional[List[Dict]]:
         return [{"type": "help"}]
     if cmd in ("list", "watchlist"):
         return [{"type": "list"}]
-    if cmd in ("brief", "recap", "now"):
-        return [{"type": "send_brief"}]
     if cmd == "add" and args:
         return [{"type": "add", "symbol": a} for a in args]
     if cmd in ("remove", "rm", "delete") and args:
         return [{"type": "remove", "symbol": a} for a in args]
     if cmd == "focus" and len(args) == 2:
         return [{"type": "set_focus", "symbol": args[0], "focus": args[1].lower()}]
-    if cmd == "time" and args:
-        return [{"type": "set_send_time", "time": args[0]}]
     return [{"type": "help"}]
 
 
@@ -121,16 +115,16 @@ class CommandProcessor:
         actions = [a for a in result["actions"] if isinstance(a, dict)]
         return actions, str(result.get("reply") or "")[:500]
 
-    def apply(self, action: Dict) -> Tuple[str, bool]:
-        """Execute one action → (reply line, wants_brief)."""
+    def apply(self, action: Dict) -> str:
+        """Execute one action → reply line ("" if ignored)."""
         kind = action.get("type")
         try:
             if kind == "add":
                 sym = normalize_symbol(action.get("symbol", ""))
                 if self.store.get(sym):
-                    return f"ℹ️ {sym} is already on your watchlist.", False
+                    return f"ℹ️ {sym} is already on your watchlist."
                 if not self._symbol_exists(sym):
-                    return f"❌ Couldn't find prices for “{sym}” on Yahoo Finance — not added.", False
+                    return f"❌ Couldn't find prices for “{sym}” on Yahoo Finance — not added."
                 focus = action.get("focus", "core")
                 msg = self.store.add(
                     sym,
@@ -139,37 +133,32 @@ class CommandProcessor:
                     focus=focus if focus in FOCUS_LEVELS else "core",
                     note=action.get("note", ""),
                 )
-                return f"✅ {msg}", False
+                return f"✅ {msg}"
             if kind == "remove":
-                return f"🗑 {self.store.remove(action.get('symbol', ''))}", False
+                return f"🗑 {self.store.remove(action.get('symbol', ''))}"
             if kind == "set_focus":
-                return f"✅ {self.store.set_focus(action.get('symbol', ''), action.get('focus', ''))}", False
+                return f"✅ {self.store.set_focus(action.get('symbol', ''), action.get('focus', ''))}"
             if kind == "set_note":
-                return f"✅ {self.store.set_note(action.get('symbol', ''), action.get('note', ''))}", False
-            if kind == "set_send_time":
-                return f"⏰ {self.store.set_send_time(action.get('time', ''))}", False
+                return f"✅ {self.store.set_note(action.get('symbol', ''), action.get('note', ''))}"
             if kind == "list":
-                return "📋 <b>Your watchlist</b>\n" + html.escape(self.store.describe(), quote=False), False
-            if kind == "send_brief":
-                return "📨 Preparing your recap now…", True
+                return "📋 <b>Your watchlist</b>\n" + html.escape(self.store.describe(), quote=False)
             if kind == "help":
-                return HELP_TEXT, False
+                return HELP_TEXT
         except ValueError as exc:
-            return f"❌ {html.escape(str(exc), quote=False)}", False
+            return f"❌ {html.escape(str(exc), quote=False)}"
         logger.warning("Ignoring unknown action: %s", action)
-        return "", False
+        return ""
 
-    def handle(self, text: str) -> Tuple[str, bool]:
-        """Process one user message → (reply text, wants_brief)."""
+    def handle(self, text: str) -> str:
+        """Process one user message → reply text."""
         actions, ai_reply = self.interpret(text)
-        lines, wants_brief = [], False
+        lines = []
         for action in actions[:10]:
-            line, brief = self.apply(action)
-            wants_brief = wants_brief or brief
+            line = self.apply(action)
             if line:
                 lines.append(line)
         if ai_reply and not lines:
             lines.append(html.escape(ai_reply, quote=False))
         if not lines:
             lines.append("I didn't catch a watchlist change there. Send /help to see what I can do.")
-        return "\n".join(lines), wants_brief
+        return "\n".join(lines)

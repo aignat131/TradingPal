@@ -24,7 +24,6 @@ FOCUS_LEVELS = ("core", "watch")
 MAX_ASSETS = 40
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9^][A-Z0-9.\-=^]{0,14}$")
-_TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
 _DEFAULT_SETTINGS = {"send_time": "08:00", "timezone": "Europe/Bucharest"}
 
@@ -129,16 +128,6 @@ class WatchlistStore:
         asset["note"] = (note or "").strip()[:200]
         self.dirty = True
         return f"Note saved for {asset['symbol']}." if asset["note"] else f"Note cleared for {asset['symbol']}."
-
-    def set_send_time(self, hhmm: str) -> str:
-        hhmm = (hhmm or "").strip()
-        if len(hhmm) == 4 and hhmm[1] == ":":
-            hhmm = "0" + hhmm
-        if not _TIME_RE.match(hhmm):
-            raise ValueError("Send time must look like HH:MM (24h), e.g. 08:00.")
-        self.settings["send_time"] = hhmm
-        self.dirty = True
-        return f"Daily brief time set to {hhmm} ({self.settings['timezone']})."
 
     # --- persistence ---------------------------------------------------
 

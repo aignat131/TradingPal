@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bot import brief, commands, main, market, news
+from bot import brief, commands, main, market, news, schedule
 from bot.storage import BotState, WatchlistStore
 from bot.telegram import MAX_MESSAGE_LEN, split_message
 
@@ -63,8 +63,7 @@ def test_store_rejects_bad_input(store):
     with pytest.raises(ValueError):
         store.remove("AAPL")
     with pytest.raises(ValueError):
-        store.set_send_time("25:00")
-    assert store.set_send_time("7:30").endswith("07:30 (Europe/Bucharest).")
+        store.set_focus("NVDA", "sometimes")
 
 
 def test_state_defaults_when_missing(tmp_path):
@@ -213,10 +212,10 @@ def test_rank_candidates():
 
 def test_slash_commands_work_without_ai(store):
     proc = commands.CommandProcessor(store, manager=None, symbol_exists=lambda s: True)
-    reply, wants = proc.handle("/add AMD SOL-USD")
+    reply = proc.handle("/add AMD SOL-USD")
     assert "Added AMD" in reply and store.get("SOL-USD")["type"] == "crypto"
-    reply, wants = proc.handle("/brief")
-    assert wants is True
+    assert "Removed TSLA" in proc.handle("/remove TSLA")
+    assert "once a day" in proc.handle("/start")
 
 
 def test_free_text_via_ai(store):
@@ -226,7 +225,7 @@ def test_free_text_via_ai(store):
         {"type": "set_focus", "symbol": "BTC-USD", "focus": "watch"},
     ], "reply": ""})
     proc = commands.CommandProcessor(store, manager=ai, symbol_exists=lambda s: True)
-    reply, _ = proc.handle("add strategy, drop tesla, bitcoin only on strong signals")
+    reply = proc.handle("add strategy, drop tesla, bitcoin only on strong signals")
     assert store.get("MSTR") and not store.get("TSLA")
     assert store.get("BTC-USD")["focus"] == "watch"
     assert "Removed TSLA" in reply and store.dirty
@@ -235,14 +234,14 @@ def test_free_text_via_ai(store):
 def test_unknown_symbol_not_added(store):
     ai = FakeManager({"actions": [{"type": "add", "symbol": "ZZZZ"}], "reply": ""})
     proc = commands.CommandProcessor(store, manager=ai, symbol_exists=lambda s: False)
-    reply, _ = proc.handle("add zzzz")
+    reply = proc.handle("add zzzz")
     assert "Couldn't find" in reply and not store.get("ZZZZ")
 
 
 def test_ai_clarifying_reply_is_escaped(store):
     ai = FakeManager({"actions": [], "reply": "Which <one>?"})
     proc = commands.CommandProcessor(store, manager=ai, symbol_exists=lambda s: True)
-    reply, _ = proc.handle("add that thing")
+    reply = proc.handle("add that thing")
     assert reply == "Which &lt;one&gt;?"
 
 
@@ -261,7 +260,7 @@ def test_ai_clarifying_reply_is_escaped(store):
 def test_brief_is_due(hhmm, last, expected):
     h, m = map(int, hhmm.split(":"))
     now = datetime(2026, 9, 24, h, m, tzinfo=ZoneInfo("Europe/Bucharest"))
-    assert main.brief_is_due(now, "08:00", last) is expected
+    assert schedule.brief_is_due(now, "08:00", last) is expected
 
 
 class FakeTelegram:
@@ -315,3 +314,25 @@ def test_brief_refuses_when_nothing_is_available(monkeypatch, store):
     monkeypatch.setattr(news, "collect_news", lambda s: {"crypto": [], "markets": [], "by_symbol": {}})
     with pytest.raises(RuntimeError):
         brief.build_brief(store, _NOW)
+
+
+@pytest.mark.parametrize("utc,expected", [
+    (datetime(2026, 7, 1, 5, 0, tzinfo=timezone.utc), True),    # summer: 08:00 local
+    (datetime(2026, 7, 1, 6, 0, tzinfo=timezone.utc), True),    # (skipped in practice: already sent)
+    (datetime(2026, 1, 15, 5, 0, tzinfo=timezone.utc), False),  # winter: 07:00 local
+    (datetime(2026, 1, 15, 6, 0, tzinfo=timezone.utc), True),   # winter: 08:00 local
+])
+def test_utc_crons_cover_8am_bucharest_all_year(utc, expected):
+    local = utc.astimezone(ZoneInfo("Europe/Bucharest"))
+    assert schedule.brief_is_due(local, "08:00", "") is expected
+
+
+def test_gate_writes_github_output(monkeypatch, tmp_path, store):
+    out = tmp_path / "gh_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    monkeypatch.setattr(schedule, "WatchlistStore", lambda: store)
+    monkeypatch.setattr(schedule, "BotState", lambda: BotState(str(tmp_path / "state.json")))
+    monkeypatch.setattr(schedule, "local_now",
+                        lambda s: datetime(2026, 9, 24, 8, 3, tzinfo=ZoneInfo("Europe/Bucharest")))
+    schedule.main()
+    assert out.read_text() == "due=true\n"

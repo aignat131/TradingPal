@@ -272,7 +272,8 @@ def render(
         "",
         f"<i>{'AI recap' if ai_used else 'Rule-based recap (AI unavailable)'} from RSI/SMA + headlines. "
         "Not financial advice.</i>",
-        "<i>Message me to change your watchlist, e.g. “add AMD” or “stop tracking Tesla”.</i>",
+        "<i>Message me to change your watchlist (e.g. “add AMD”, “stop tracking Tesla”) — "
+        "I apply it before the next recap.</i>",
     ]
     return "\n".join(lines)
 
