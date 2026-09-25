@@ -175,8 +175,10 @@ you send during the day shows up in the next morning's recap. Want it sooner? Ru
 Telegram only keeps unread messages for 24 hours, so a message sent right after one morning's
 recap can occasionally expire before the next morning's run; if a change didn't apply, resend it.
 
-The cron fires at 05:00 and 06:00 UTC so it hits 08:00 Romania time in both summer and
-winter; a cheap gate step makes sure only one of them actually runs the bot. To change the
+GitHub can delay or silently drop scheduled runs (especially at the top of the hour), so
+the workflow tries every 30 minutes between 05:07 and 07:37 UTC. That covers 08:00 Romania
+time in both summer and winter, and a cheap gate step makes sure only the first attempt
+that is due actually runs the bot, so you still get one recap a day (usually 08:07–08:30). To change the
 time, edit `send_time` in `watchlist.json` **and** the cron in
 `.github/workflows/telegram-bot.yml`.
 

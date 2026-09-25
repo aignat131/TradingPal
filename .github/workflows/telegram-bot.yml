@@ -4,13 +4,15 @@ name: Telegram bot
 # changes), then send the morning brief. Time + timezone live in
 # bot/data/watchlist.json (default 08:00 Europe/Bucharest).
 #
-# Cron is UTC-only, so it fires at 05:00 and 06:00 UTC to hit 08:00 Bucharest in
-# both summer (UTC+3) and winter (UTC+2); the "gate" step lets only the right
-# one do any work. Extra runs happen only via "Run workflow" (manual).
+# Cron is UTC-only and GitHub may delay or silently DROP scheduled runs,
+# especially at the top of the hour. So it tries several off-peak times between
+# 05:07 and 07:37 UTC — covering 08:00 Bucharest in both summer (UTC+3) and
+# winter (UTC+2) — and the "gate" step lets only the first due attempt do any
+# work (the rest exit in seconds). Extra runs only via "Run workflow" (manual).
 # Scheduled workflows only run from the default branch.
 on:
   schedule:
-    - cron: "0 5,6 * * *"
+    - cron: "7,37 5,6,7 * * *"
   workflow_dispatch:
     inputs:
       force_brief:
