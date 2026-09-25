@@ -336,3 +336,18 @@ def test_gate_writes_github_output(monkeypatch, tmp_path, store):
                         lambda s: datetime(2026, 9, 24, 8, 3, tzinfo=ZoneInfo("Europe/Bucharest")))
     schedule.main()
     assert out.read_text() == "due=true\n"
+
+
+@pytest.mark.parametrize("month", [1, 7])  # winter (UTC+2) and summer (UTC+3)
+def test_workflow_cron_attempts_reach_8am_bucharest(month):
+    import yaml
+
+    with open(".github/workflows/telegram-bot.yml") as fh:
+        cron = yaml.safe_load(fh)[True]["schedule"][0]["cron"]
+    minutes, hours = (list(map(int, f.split(","))) for f in cron.split()[:2])
+    attempts = sorted(datetime(2026, month, 15, h, m, tzinfo=timezone.utc) for h in hours for m in minutes)
+    due = [t for t in attempts
+           if schedule.brief_is_due(t.astimezone(ZoneInfo("Europe/Bucharest")), "08:00", "")]
+    assert len(due) >= 3  # several retries if GitHub drops a run
+    first_local = due[0].astimezone(ZoneInfo("Europe/Bucharest"))
+    assert (first_local.hour, first_local.minute) <= (8, 30)
