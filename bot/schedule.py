@@ -5,9 +5,9 @@ Stdlib-only so the workflow can run it as a cheap gate *before* installing
 dependencies:  python3 -m bot.schedule  → prints "due=true|false"
 (appended to $GITHUB_OUTPUT when set).
 
-GitHub cron is UTC-only, so the workflow fires at both 05:00 and 06:00 UTC to
-hit 08:00 Europe/Bucharest in summer (UTC+3) and winter (UTC+2); this gate
-lets exactly one of them do the work.
+Several triggers can start the bot each morning (an external timer plus
+GitHub's own, unreliable, cron attempts); this gate lets only the first one
+that is due do the work, so the recap is sent once a day.
 """
 import os
 from datetime import datetime, timedelta
@@ -15,8 +15,9 @@ from zoneinfo import ZoneInfo
 
 from bot.storage import BotState, WatchlistStore
 
-# Give up on a missed morning brief after this long (e.g. an Actions outage).
-BRIEF_WINDOW = timedelta(hours=4)
+# Give up on a missed morning brief after this long. GitHub's own cron is often
+# hours late, so the backup schedule still delivers a late recap within this.
+BRIEF_WINDOW = timedelta(hours=6)
 
 
 def brief_is_due(now_local: datetime, send_time: str, last_brief_date: str) -> bool:

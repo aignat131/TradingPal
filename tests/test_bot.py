@@ -253,7 +253,8 @@ def test_ai_clarifying_reply_is_escaped(store):
     ("07:59", "", False),
     ("08:00", "", True),
     ("11:30", "", True),
-    ("12:30", "", False),               # window missed
+    ("13:30", "", True),                # late GitHub cron still delivers
+    ("14:30", "", False),               # window missed
     ("09:00", "2026-09-24", False),     # already sent today
     ("09:00", "2026-09-23", True),
 ])
