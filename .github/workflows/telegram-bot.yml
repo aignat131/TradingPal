@@ -4,19 +4,19 @@ name: Telegram bot
 # changes), then send the morning brief. Time + timezone live in
 # bot/data/watchlist.json (default 08:00 Europe/Bucharest).
 #
-# Cron is UTC-only and GitHub may delay or silently DROP scheduled runs,
-# especially at the top of the hour. So it tries several off-peak times between
-# 05:07 and 07:37 UTC — covering 08:00 Bucharest in both summer (UTC+3) and
-# winter (UTC+2) — and the "gate" step lets only the first due attempt do any
-# work (the rest exit in seconds). Extra runs only via "Run workflow" (manual).
-# Scheduled workflows only run from the default branch.
+# PRIMARY trigger: an external timer (cron-job.org, see README) calls the
+# workflow_dispatch API at 08:00 with force_brief=false — GitHub's own cron is
+# best-effort and in practice ran hours late or not at all.
+# BACKUP trigger: the schedule below, tried at several off-peak times. The
+# brief is only sent once per day whichever trigger arrives first (the gate
+# step / bot.main check last_brief_date). Scheduled runs use the default branch.
 on:
   schedule:
     - cron: "7,37 5,6,7 * * *"
   workflow_dispatch:
     inputs:
       force_brief:
-        description: "Send the brief now (untick to only apply watchlist changes)"
+        description: "Send the brief now (untick = send only if today's is still due)"
         type: boolean
         default: true
 

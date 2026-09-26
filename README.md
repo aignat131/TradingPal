@@ -175,12 +175,13 @@ you send during the day shows up in the next morning's recap. Want it sooner? Ru
 Telegram only keeps unread messages for 24 hours, so a message sent right after one morning's
 recap can occasionally expire before the next morning's run; if a change didn't apply, resend it.
 
-GitHub can delay or silently drop scheduled runs (especially at the top of the hour), so
-the workflow tries every 30 minutes between 05:07 and 07:37 UTC. That covers 08:00 Romania
-time in both summer and winter, and a cheap gate step makes sure only the first attempt
-that is due actually runs the bot, so you still get one recap a day (usually 08:07–08:30). To change the
-time, edit `send_time` in `watchlist.json` **and** the cron in
-`.github/workflows/telegram-bot.yml`.
+**Reliable 08:00 delivery.** GitHub's built-in scheduler is best-effort — in practice it ran
+hours late or skipped runs entirely — so the recap is triggered by a free external timer
+(cron-job.org) that presses "Run workflow" via the GitHub API at exactly 08:00. GitHub's own
+schedule stays as a backup; whichever arrives first sends the recap, and it's sent once a day
+(a backup run up to 14:00 still delivers a late recap).
+
+To change the time, edit `send_time` in `watchlist.json` and the time on cron-job.org.
 
 ### Setup
 
@@ -191,6 +192,19 @@ time, edit `send_time` in `watchlist.json` **and** the cron in
    `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GEMINI_API_KEY` (optional: `GROQ_API_KEY`).
 4. Merge to the default branch (scheduled workflows only run from there), then test it via
    **Actions → Telegram bot → Run workflow** (*Send the brief now* is ticked by default).
+5. **External 08:00 timer** (makes delivery on time):
+   - Create a fine-grained token at GitHub → *Settings → Developer settings → Personal access
+     tokens → Fine-grained tokens → Generate new token*: **Only select repositories** →
+     `TradingPal`; **Repository permissions → Actions: Read and write** (nothing else).
+     Set the longest expiration and note the date to renew it.
+   - At [cron-job.org](https://cron-job.org) (free) → *Create cronjob*:
+     - URL: `https://api.github.com/repos/aignat131/TradingPal/actions/workflows/telegram-bot.yml/dispatches`
+     - Schedule: every day at **08:00**, timezone **Europe/Bucharest**
+     - *Advanced*: method **POST**; headers `Accept: application/vnd.github+json`,
+       `Authorization: Bearer <your token>`, `X-GitHub-Api-Version: 2022-11-28`,
+       `Content-Type: application/json`; body
+       `{"ref":"main","inputs":{"force_brief":"false"}}`
+   - Use *Test run*: a **204** response means GitHub accepted it.
 
 Only messages from `TELEGRAM_CHAT_ID` are obeyed. Local test run (prints instead of sending):
 
